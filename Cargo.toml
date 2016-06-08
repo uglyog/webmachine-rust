@@ -1,0 +1,6 @@
+[package]
+name = "webmachine-rust"
+version = "0.0.0"
+authors = ["Ronald Holshausen <uglyog@gmail.com>"]
+
+[dependencies]
