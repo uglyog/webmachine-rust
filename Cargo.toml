@@ -4,3 +4,13 @@ version = "0.0.0"
 authors = ["Ronald Holshausen <uglyog@gmail.com>"]
 
 [dependencies]
+p-macro = "^0.2.0"
+log = "^0.3.5"
+maplit = "^0.1.3"
+
+[dependencies.hyper]
+version = "^0.8.0"
+default-features = false
+
+[dev-dependencies]
+expectest = "^0.5.1"
