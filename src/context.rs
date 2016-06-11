@@ -6,7 +6,9 @@ pub struct WebmachineRequest {
     /// Path of the request relative to the resource
     pub request_path: String,
     /// Resource base path
-    pub base_path: String
+    pub base_path: String,
+    /// Request method
+    pub method: String
 }
 
 impl WebmachineRequest {
@@ -14,7 +16,8 @@ impl WebmachineRequest {
     pub fn default() -> WebmachineRequest {
         WebmachineRequest {
             request_path: s!("/"),
-            base_path: s!("/")
+            base_path: s!("/"),
+            method: s!("GET")
         }
     }
 }

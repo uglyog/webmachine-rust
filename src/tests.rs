@@ -7,7 +7,8 @@ use expectest::prelude::*;
 fn resource(path: &str) -> WebmachineRequest {
     WebmachineRequest {
         request_path: s!(path),
-        base_path: s!("/")
+        base_path: s!("/"),
+        method: s!("GET")
     }
 }
 
@@ -53,7 +54,8 @@ fn dispatcher_returns_404_if_there_is_no_matching_resource() {
 fn execute_state_machine_returns_503_if_resource_indicates_not_available() {
     let mut context = WebmachineContext::default();
     let resource = WebmachineResource {
-        available: Box::new(|_| { false })
+        available: Box::new(|_| { false }),
+        .. WebmachineResource::default()
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(503));
@@ -98,4 +100,18 @@ fn update_paths_for_resource_on_path_with_subpath() {
     update_paths_for_resource(&mut request, &s!("/path"));
     expect(request.request_path).to(be_equal_to(s!("/path2")));
     expect(request.base_path).to(be_equal_to(s!("/path")));
+}
+
+#[test]
+fn execute_state_machine_returns_501_if_method_is_not_in_known_list() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("Blah"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource::default();
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(501));
 }

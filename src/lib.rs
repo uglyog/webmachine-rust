@@ -28,21 +28,22 @@ use context::*;
 /// Struct to represent a resource in webmachine
 pub struct WebmachineResource {
     /// Is the resource available? Returning false will result in a '503 Service Not Available'
-    // response. Defaults to true. If the resource is only temporarily not available,
-    // add a 'Retry-After' response header in the body of the method.
-    pub available: Box<Fn(&mut WebmachineContext) -> bool>
+    /// response. Defaults to true. If the resource is only temporarily not available,
+    /// add a 'Retry-After' response header.
+    pub available: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// HTTP methods that are known to the resource. Default includes all standard HTTP methods.
+    /// One could override this to allow additional methods
+    pub known_methods: Vec<String>
 }
 
 impl WebmachineResource {
     /// Creates a default webmachine resource
     pub fn default() -> WebmachineResource {
         WebmachineResource {
-            available: Box::new(WebmachineResource::default_available)
+            available: Box::new(|_| true),
+            known_methods: vec![s!("OPTIONS"), s!("GET"), s!("POST"), s!("PUT"), s!("DELETE"),
+                s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")]
         }
-    }
-
-    fn default_available(_: &mut WebmachineContext) -> bool {
-        true
     }
 }
 
@@ -62,7 +63,8 @@ fn sanitise_path(path: &String) -> Vec<String> {
 enum Decision {
     Start,
     End(u16),
-    B13Available
+    B13Available,
+    B12KnownMethod
 }
 
 impl Decision {
@@ -82,16 +84,16 @@ enum Transition {
 lazy_static! {
     static ref TRANSITION_MAP: HashMap<Decision, Transition> = hashmap!{
         Decision::Start => Transition::To(Decision::B13Available),
-        Decision::B13Available => Transition::Branch(Decision::End(200), Decision::End(503))
+        Decision::B13Available => Transition::Branch(Decision::B12KnownMethod, Decision::End(503)),
+        Decision::B12KnownMethod => Transition::Branch(Decision::End(200), Decision::End(501))
     };
 }
 
 fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resource: &WebmachineResource) -> bool {
     match decision {
-        &Decision::B13Available => {
-            let f: &Fn(&mut WebmachineContext) -> bool = resource.available.as_ref();
-            f(context)
-        },
+        &Decision::B13Available => resource.available.as_ref()(context),
+        &Decision::B12KnownMethod => resource.known_methods
+            .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some(),
         _ => false
     }
 }
@@ -100,7 +102,7 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
     let mut state = Decision::Start;
     let mut decisions: Vec<(Decision, bool, Decision)> = Vec::new();
     while !state.is_terminal() {
-        p!(state);
+        debug!("state is {:?}", state);
         state = match TRANSITION_MAP.get(&state) {
             Some(transition) => match transition {
                 &Transition::To(ref decision) => decision.clone(),
@@ -123,8 +125,8 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
             }
         }
     }
-    p!(state);
-    p!(decisions);
+    debug!("Final state is {:?}", state);
+    debug!("Decisions: {:?}", decisions);
     match state {
         Decision::End(status) => context.response.status = status,
         _ => ()
@@ -150,7 +152,8 @@ fn request_from_hyper_request(req: &Request) -> WebmachineRequest {
     let request_path = extract_path(&req.uri);
     WebmachineRequest {
         request_path: request_path.clone(),
-        base_path: s!("/")
+        base_path: s!("/"),
+        method: s!(req.method.as_ref())
     }
 }
 
