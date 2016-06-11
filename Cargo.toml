@@ -7,9 +7,11 @@ authors = ["Ronald Holshausen <uglyog@gmail.com>"]
 p-macro = "^0.2.0"
 log = "^0.3.5"
 maplit = "^0.1.3"
+itertools = "^0.4.15"
+lazy_static = "^0.1.15"
 
 [dependencies.hyper]
-version = "^0.8.0"
+version = "^0.9.7"
 default-features = false
 
 [dev-dependencies]
