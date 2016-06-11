@@ -115,3 +115,31 @@ fn execute_state_machine_returns_501_if_method_is_not_in_known_list() {
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(501));
 }
+
+#[test]
+fn execute_state_machine_returns_414_if_uri_is_too_long() {
+    let mut context = WebmachineContext::default();
+    let resource = WebmachineResource {
+        uri_too_long: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(414));
+}
+
+#[test]
+fn execute_state_machine_returns_405_if_method_is_not_allowed() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("TRACE"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource::default();
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(405));
+    expect(context.response.headers.get(&s!("Allow")).unwrap().clone()).to(be_equal_to(vec![
+        s!("OPTIONS"), s!("GET"), s!("HEAD")
+    ]));
+}

@@ -33,7 +33,12 @@ pub struct WebmachineResource {
     pub available: Box<Fn(&mut WebmachineContext) -> bool>,
     /// HTTP methods that are known to the resource. Default includes all standard HTTP methods.
     /// One could override this to allow additional methods
-    pub known_methods: Vec<String>
+    pub known_methods: Vec<String>,
+    /// If the URI is too long to be processed, this should return true, which will result in a
+    // '414 Request URI Too Long' response. Defaults to false.
+    pub uri_too_long: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// HTTP methods that are allowed on this resource. Defaults to GET','HEAD and 'OPTIONS'.
+    pub allowed_methods: Vec<String>
 }
 
 impl WebmachineResource {
@@ -42,7 +47,9 @@ impl WebmachineResource {
         WebmachineResource {
             available: Box::new(|_| true),
             known_methods: vec![s!("OPTIONS"), s!("GET"), s!("POST"), s!("PUT"), s!("DELETE"),
-                s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")]
+                s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")],
+            uri_too_long: Box::new(|_| false),
+            allowed_methods: vec![s!("OPTIONS"), s!("GET"), s!("HEAD")]
         }
     }
 }
@@ -64,7 +71,9 @@ enum Decision {
     Start,
     End(u16),
     B13Available,
-    B12KnownMethod
+    B12KnownMethod,
+    B11UriTooLong,
+    B10MethodAllowed
 }
 
 impl Decision {
@@ -85,7 +94,9 @@ lazy_static! {
     static ref TRANSITION_MAP: HashMap<Decision, Transition> = hashmap!{
         Decision::Start => Transition::To(Decision::B13Available),
         Decision::B13Available => Transition::Branch(Decision::B12KnownMethod, Decision::End(503)),
-        Decision::B12KnownMethod => Transition::Branch(Decision::End(200), Decision::End(501))
+        Decision::B12KnownMethod => Transition::Branch(Decision::B11UriTooLong, Decision::End(501)),
+        Decision::B11UriTooLong => Transition::Branch(Decision::End(414), Decision::B10MethodAllowed),
+        Decision::B10MethodAllowed => Transition::Branch(Decision::End(200), Decision::End(405))
     };
 }
 
@@ -94,6 +105,17 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::B13Available => resource.available.as_ref()(context),
         &Decision::B12KnownMethod => resource.known_methods
             .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some(),
+        &Decision::B11UriTooLong => resource.uri_too_long.as_ref()(context),
+        &Decision::B10MethodAllowed => {
+            match resource.allowed_methods
+                .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()) {
+                Some(_) => true,
+                None => {
+                    context.response.add_header(s!("Allow"), resource.allowed_methods.clone());
+                    false
+                }
+            }
+        },
         _ => false
     }
 }
@@ -105,7 +127,10 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
         debug!("state is {:?}", state);
         state = match TRANSITION_MAP.get(&state) {
             Some(transition) => match transition {
-                &Transition::To(ref decision) => decision.clone(),
+                &Transition::To(ref decision) => {
+                    debug!("Transitioning to {:?}", decision);
+                    decision.clone()
+                },
                 &Transition::Branch(ref decision_true, ref decision_false) => {
                     if execute_decision(&state, context, resource) {
                         debug!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
@@ -159,6 +184,11 @@ fn request_from_hyper_request(req: &Request) -> WebmachineRequest {
 
 fn generate_hyper_response(context: &WebmachineContext, res: &mut Response) {
     *res.status_mut() = StatusCode::from_u16(context.response.status);
+    for (header, values) in context.response.headers.clone() {
+        let header = header.clone();
+        let header_values = values.iter().join(", ").into_bytes();
+        res.headers_mut().set_raw(header, vec![header_values]);
+    }
 }
 
 /// The main hyper dispatcher
