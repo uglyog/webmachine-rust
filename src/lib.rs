@@ -1,4 +1,4 @@
-//! The `webmachine-rust` crate provides a port of webmachine to rust.
+//! The `webmachine-rust` crate provides a port of webmachine to rust (port of webmachine-ruby).
 
 #![warn(missing_docs)]
 
@@ -14,6 +14,37 @@ use hyper::server::{Request, Response};
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
 use itertools::Itertools;
+
+/// Simple macro to convert a string slice to a `String` struct.
+#[macro_export]
+macro_rules! s {
+    ($e:expr) => ($e.to_string())
+}
+
+pub mod context;
+
+use context::*;
+
+/// Struct to represent a resource in webmachine
+pub struct WebmachineResource {
+    /// Is the resource available? Returning false will result in a '503 Service Not Available'
+    // response. Defaults to true. If the resource is only temporarily not available,
+    // add a 'Retry-After' response header in the body of the method.
+    pub available: Box<Fn(&mut WebmachineContext) -> bool>
+}
+
+impl WebmachineResource {
+    /// Creates a default webmachine resource
+    pub fn default() -> WebmachineResource {
+        WebmachineResource {
+            available: Box::new(WebmachineResource::default_available)
+        }
+    }
+
+    fn default_available(_: &mut WebmachineContext) -> bool {
+        true
+    }
+}
 
 fn extract_path(uri: &RequestUri) -> String {
     match uri {
@@ -55,15 +86,17 @@ lazy_static! {
     };
 }
 
-fn execute_decision(decision: &Decision, selected_path: &String, resource: &WebmachineResource,
-    mut req: &Request, mut res: &Response) -> bool {
+fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resource: &WebmachineResource) -> bool {
     match decision {
-        &Decision::B13Available => false,
+        &Decision::B13Available => {
+            let f: &Fn(&mut WebmachineContext) -> bool = resource.available.as_ref();
+            f(context)
+        },
         _ => false
     }
 }
 
-fn execute_state_machine(selected_path: &String, resource: &WebmachineResource, req: &Request, res: &mut Response) {
+fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineResource) {
     let mut state = Decision::Start;
     let mut decisions: Vec<(Decision, bool, Decision)> = Vec::new();
     while !state.is_terminal() {
@@ -72,7 +105,7 @@ fn execute_state_machine(selected_path: &String, resource: &WebmachineResource, 
             Some(transition) => match transition {
                 &Transition::To(ref decision) => decision.clone(),
                 &Transition::Branch(ref decision_true, ref decision_false) => {
-                    if execute_decision(&state, selected_path, resource, req, res) {
+                    if execute_decision(&state, context, resource) {
                         debug!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
                         decisions.push((state, true, decision_true.clone()));
                         decision_true.clone()
@@ -93,23 +126,36 @@ fn execute_state_machine(selected_path: &String, resource: &WebmachineResource, 
     p!(state);
     p!(decisions);
     match state {
-        Decision::End(status) => *res.status_mut() = StatusCode::from_u16(status),
+        Decision::End(status) => context.response.status = status,
         _ => ()
     }
 }
 
-/// Struct to represent a resource in webmachine
-pub struct WebmachineResource {
-
+fn update_paths_for_resource(request: &mut WebmachineRequest, base_path: &String) {
+    request.base_path = base_path.clone();
+    if request.request_path.len() >  base_path.len() {
+        let request_path = request.request_path.clone();
+        let subpath = request_path.split_at(base_path.len()).1;
+        if subpath.starts_with("/") {
+            request.request_path = s!(subpath);
+        } else {
+            request.request_path = s!("/") + subpath;
+        }
+    } else {
+        request.request_path = s!("/");
+    }
 }
 
-impl WebmachineResource {
-    /// Creates a default webmachine resource
-    pub fn default() -> WebmachineResource {
-        WebmachineResource {
-
-        }
+fn request_from_hyper_request(req: &Request) -> WebmachineRequest {
+    let request_path = extract_path(&req.uri);
+    WebmachineRequest {
+        request_path: request_path.clone(),
+        base_path: s!("/")
     }
+}
+
+fn generate_hyper_response(context: &WebmachineContext, res: &mut Response) {
+    *res.status_mut() = StatusCode::from_u16(context.response.status);
 }
 
 /// The main hyper dispatcher
@@ -122,26 +168,43 @@ impl WebmachineDispatcher {
     /// Main hyper dispatch function for the Webmachine. This will look for a matching resource
     /// based on the request path. If one is not found, a 404 Not Found response is returned
     pub fn dispatch(&self, req: Request, mut res: Response) {
-        let request_path = extract_path(&req.uri);
-        let matching_paths: Vec<String> = self.match_paths(&request_path);
-        if matching_paths.is_empty() {
-            *res.status_mut() = StatusCode::NotFound;
-        } else {
-            let ordered_by_length = matching_paths.clone().iter()
-                .cloned()
-                .sorted_by(|a, b| Ord::cmp(&b.len(), &a.len()));
-            let selected_path = ordered_by_length.first().unwrap();
-            execute_state_machine(selected_path, self.routes.get(selected_path).unwrap(), &req, &mut res);
+        let mut context = self.context_from_hyper_request(&req);
+        self.dispatch_to_resource(&mut context);
+        generate_hyper_response(&context, &mut res);
+    }
+
+    fn context_from_hyper_request(&self, req: &Request) -> WebmachineContext {
+        let request = request_from_hyper_request(req);
+        WebmachineContext {
+            request: request,
+            response: WebmachineResponse::default()
         }
     }
 
-    fn match_paths(&self, request_path: &String) -> Vec<String> {
-        let request_path = sanitise_path(request_path);
+    fn match_paths(&self, request: &WebmachineRequest) -> Vec<String> {
+        let request_path = sanitise_path(&request.request_path);
         self.routes
             .keys()
             .cloned()
             .filter(|k| request_path.starts_with(&sanitise_path(k)))
             .collect()
+    }
+
+    /// Dispatches to the matching webmachine resource. If there is no matching resource, returns
+    /// 404 Not Found response
+    pub fn dispatch_to_resource(&self, context: &mut WebmachineContext) {
+        let matching_paths = self.match_paths(&context.request);
+        let ordered_by_length = matching_paths.clone().iter()
+            .cloned()
+            .sorted_by(|a, b| Ord::cmp(&b.len(), &a.len()));
+        match ordered_by_length.first() {
+            Some(path) => {
+                let resource = self.routes.get(path).unwrap();
+                update_paths_for_resource(&mut context.request, path);
+                execute_state_machine(context, resource);
+            },
+            None => context.response.status = 404
+        };
     }
 }
 
