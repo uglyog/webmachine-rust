@@ -143,3 +143,14 @@ fn execute_state_machine_returns_405_if_method_is_not_allowed() {
         s!("OPTIONS"), s!("GET"), s!("HEAD")
     ]));
 }
+
+#[test]
+fn execute_state_machine_returns_400_if_malformed_request() {
+    let mut context = WebmachineContext::default();
+    let resource = WebmachineResource {
+        malformed_request: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(400));
+}

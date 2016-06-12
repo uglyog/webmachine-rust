@@ -38,7 +38,10 @@ pub struct WebmachineResource {
     // '414 Request URI Too Long' response. Defaults to false.
     pub uri_too_long: Box<Fn(&mut WebmachineContext) -> bool>,
     /// HTTP methods that are allowed on this resource. Defaults to GET','HEAD and 'OPTIONS'.
-    pub allowed_methods: Vec<String>
+    pub allowed_methods: Vec<String>,
+    /// If the request is malformed, this should return true, which will result in a
+    /// '400 Malformed Request' response. Defaults to false.
+    pub malformed_request: Box<Fn(&mut WebmachineContext) -> bool>
 }
 
 impl WebmachineResource {
@@ -49,7 +52,8 @@ impl WebmachineResource {
             known_methods: vec![s!("OPTIONS"), s!("GET"), s!("POST"), s!("PUT"), s!("DELETE"),
                 s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")],
             uri_too_long: Box::new(|_| false),
-            allowed_methods: vec![s!("OPTIONS"), s!("GET"), s!("HEAD")]
+            allowed_methods: vec![s!("OPTIONS"), s!("GET"), s!("HEAD")],
+            malformed_request: Box::new(|_| false)
         }
     }
 }
@@ -73,7 +77,8 @@ enum Decision {
     B13Available,
     B12KnownMethod,
     B11UriTooLong,
-    B10MethodAllowed
+    B10MethodAllowed,
+    B9MalformedRequest
 }
 
 impl Decision {
@@ -96,7 +101,8 @@ lazy_static! {
         Decision::B13Available => Transition::Branch(Decision::B12KnownMethod, Decision::End(503)),
         Decision::B12KnownMethod => Transition::Branch(Decision::B11UriTooLong, Decision::End(501)),
         Decision::B11UriTooLong => Transition::Branch(Decision::End(414), Decision::B10MethodAllowed),
-        Decision::B10MethodAllowed => Transition::Branch(Decision::End(200), Decision::End(405))
+        Decision::B10MethodAllowed => Transition::Branch(Decision::B9MalformedRequest, Decision::End(405)),
+        Decision::B9MalformedRequest => Transition::Branch(Decision::End(400), Decision::End(200))
     };
 }
 
@@ -116,6 +122,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 }
             }
         },
+        &Decision::B9MalformedRequest => resource.malformed_request.as_ref()(context),
         _ => false
     }
 }
