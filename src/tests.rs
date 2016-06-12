@@ -143,9 +143,9 @@ fn execute_state_machine_returns_405_if_method_is_not_allowed() {
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(405));
     expect(context.response.headers.get(&s!("Allow")).unwrap().clone()).to(be_equal_to(vec![
-        HeaderValue::basic(s!("OPTIONS")),
-        HeaderValue::basic(s!("GET")),
-        HeaderValue::basic(s!("HEAD"))
+        HeaderValue::basic(&s!("OPTIONS")),
+        HeaderValue::basic(&s!("GET")),
+        HeaderValue::basic(&s!("HEAD"))
     ]));
 }
 
@@ -170,7 +170,7 @@ fn execute_state_machine_returns_401_if_not_authorized() {
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(401));
     expect(context.response.headers.get(&s!("WWW-Authenticate")).unwrap().clone()).to(be_equal_to(vec![
-        HeaderValue::basic(s!("Basic realm=\"User Visible Realm\""))
+        HeaderValue::basic(&s!("Basic realm=\"User Visible Realm\""))
     ]));
 }
 
@@ -200,8 +200,9 @@ fn execute_state_machine_returns_501_if_there_is_an_unsupported_content_header()
 fn execute_state_machine_returns_415_if_the_content_type_is_unknown() {
     let mut context = WebmachineContext {
         request: WebmachineRequest {
+            method: s!("POST"),
             headers: hashmap!{
-                s!("Content-type") => vec![HeaderValue::basic(s!("application/xml"))]
+                s!("Content-type") => vec![HeaderValue::basic(&s!("application/xml"))]
             },
             .. WebmachineRequest::default()
         },
@@ -209,10 +210,29 @@ fn execute_state_machine_returns_415_if_the_content_type_is_unknown() {
     };
     let resource = WebmachineResource {
         acceptable_content_types: vec![s!("application/json")],
+        allowed_methods: vec![s!("POST")],
         .. WebmachineResource::default()
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(415));
+}
+
+#[test]
+fn execute_state_machine_returns_does_not_return_415_if_not_a_put_or_post() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Content-type") => vec![HeaderValue::basic(&s!("application/xml"))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to_not(be_equal_to(415));
 }
 
 #[test]
@@ -228,4 +248,61 @@ fn parse_header_test() {
             HeaderValue { value: s!("text/x-dvi"), params: hashmap!{s!("q") => s!("0.8")} },
             HeaderValue { value: s!("text/x-c"), params: hashmap!{} }
         ]));
+}
+
+#[test]
+fn execute_state_machine_returns_413_if_the_request_entity_is_too_large() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        valid_entity_length: Box::new(|_| false),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(413));
+}
+
+#[test]
+fn execute_state_machine_returns_does_not_return_413_if_not_a_put_or_post() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        valid_entity_length: Box::new(|_| false),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to_not(be_equal_to(413));
+}
+
+#[test]
+fn execute_state_machine_returns_headers_for_option_request() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("OPTIONS"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("OPTIONS")],
+        options: Box::new(|_, _| Some(hashmap!{
+            s!("A") => vec![s!("B")],
+            s!("C") => vec![s!("D;E=F")],
+        })),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(200));
+    expect(context.response.headers.get(&s!("A")).unwrap().clone()).to(be_equal_to(vec![s!("B")]));
+    expect(context.response.headers.get(&s!("C")).unwrap().clone()).to(be_equal_to(vec![s!("D;E=F")]));
 }

@@ -120,12 +120,12 @@ impl HeaderValue {
                     })
             }
         } else {
-            HeaderValue::basic(s)
+            HeaderValue::basic(&s)
         }
     }
 
     /// Creates a basic header value that has no parameters
-    pub fn basic(s: String) -> HeaderValue {
+    pub fn basic(s: &String) -> HeaderValue {
         HeaderValue {
             value: s.clone(),
             params: HashMap::new()

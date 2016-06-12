@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use headers::*;
+use itertools::Itertools;
 
 /// Request that the state machine is executing against
 pub struct WebmachineRequest {
@@ -38,6 +39,16 @@ impl WebmachineRequest {
             None => s!("application/json")
         }
     }
+
+    /// If the request is a put or post
+    pub fn is_put_or_post(&self) -> bool {
+        ["PUT", "POST"].contains(&self.method.to_uppercase().as_str())
+    }
+
+    /// If the request is an options
+    pub fn is_options(&self) -> bool {
+        self.method.to_uppercase() == "OPTIONS"
+    }
 }
 
 /// Response that is generated as a result of the webmachine execution
@@ -57,9 +68,33 @@ impl WebmachineResponse {
         }
     }
 
-    /// Adds the headers values to the headers
+    /// Adds the header values to the headers
     pub fn add_header(&mut self, header: String, values: Vec<HeaderValue>) {
         self.headers.insert(header, values);
+    }
+
+    /// Adds the headers from a HashMap to the headers
+    pub fn add_headers(&mut self, headers: HashMap<String, Vec<String>>) {
+        for (k, v) in headers {
+            self.headers.insert(k, v.iter().map(HeaderValue::basic).collect());
+        }
+    }
+
+    /// Adds standard CORS headers to the response
+    pub fn add_cors_headers(&mut self, allowed_methods: &Vec<String>) {
+        let cors_headers = WebmachineResponse::cors_headers(allowed_methods);
+        for (k, v) in cors_headers {
+            self.add_header(k, v.iter().map(HeaderValue::basic).collect());
+        }
+    }
+
+    /// Returns a HaspMap of standard CORS headers
+    pub fn cors_headers(allowed_methods: &Vec<String>) -> HashMap<String, Vec<String>> {
+        hashmap!{
+            s!("Access-Control-Allow-Origin") => vec![s!("*")],
+            s!("Access-Control-Allow-Methods") => allowed_methods.clone(),
+            s!("Access-Control-Allow-Headers") => vec![s!("Content-Type")]
+        }
     }
 }
 

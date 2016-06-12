@@ -56,7 +56,16 @@ pub struct WebmachineResource {
     pub unsupported_content_headers: Box<Fn(&mut WebmachineContext) -> bool>,
     /// The list of acceptable content types. Defaults to 'application/json'. If the content type
     /// of the request is not in this list, a '415 Unsupported Media Type' response is returned.
-    pub acceptable_content_types: Vec<String>
+    pub acceptable_content_types: Vec<String>,
+    /// If the entity length on PUT or POST is invalid, this should return false, which will result
+    /// in a '413 Request Entity Too Large' response. Defaults to true.
+    pub valid_entity_length: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// This is called just before the final response is constructed and sent. This allows the
+    /// response to be modified. The default implementation adds CORS headers to the response
+    pub finish_request: Box<Fn(&mut WebmachineContext, &WebmachineResource)>,
+    /// If the OPTIONS method is supported and is used, this return a HashMap of headers that
+    // should appear in the response. Defaults to CORS headers.
+    pub options: Box<Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>
 }
 
 impl WebmachineResource {
@@ -72,7 +81,10 @@ impl WebmachineResource {
             not_authorized: Box::new(|_| None),
             forbidden: Box::new(|_| false),
             unsupported_content_headers: Box::new(|_| false),
-            acceptable_content_types: vec![s!("application/json")]
+            acceptable_content_types: vec![s!("application/json")],
+            valid_entity_length: Box::new(|_| true),
+            finish_request: Box::new(|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
+            options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods)))
         }
     }
 }
@@ -101,13 +113,17 @@ enum Decision {
     B8Authorized,
     B7Forbidden,
     B6UnsupportedContentHeader,
-    B5UnkownContentType
+    B5UnkownContentType,
+    B4RequestEntityTooLarge,
+    B3Options,
+    A3Options
 }
 
 impl Decision {
     fn is_terminal(&self) -> bool {
         match self {
             &Decision::End(_) => true,
+            &Decision::A3Options => true,
             _ => false
         }
     }
@@ -129,7 +145,9 @@ lazy_static! {
         Decision::B8Authorized => Transition::Branch(Decision::B7Forbidden, Decision::End(401)),
         Decision::B7Forbidden => Transition::Branch(Decision::End(403), Decision::B6UnsupportedContentHeader),
         Decision::B6UnsupportedContentHeader => Transition::Branch(Decision::End(501), Decision::B5UnkownContentType),
-        Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::End(200))
+        Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::B4RequestEntityTooLarge),
+        Decision::B4RequestEntityTooLarge => Transition::Branch(Decision::End(413), Decision::B3Options),
+        Decision::B3Options => Transition::Branch(Decision::A3Options, Decision::End(200)),
     };
 }
 
@@ -146,7 +164,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 None => {
                     context.response.add_header(s!("Allow"), resource.allowed_methods
                         .iter()
-                        .map(|s| HeaderValue::basic(s.clone()))
+                        .map(HeaderValue::basic)
                         .collect());
                     false
                 }
@@ -162,9 +180,11 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         },
         &Decision::B7Forbidden => resource.forbidden.as_ref()(context),
         &Decision::B6UnsupportedContentHeader => resource.unsupported_content_headers.as_ref()(context),
-        &Decision::B5UnkownContentType => resource.acceptable_content_types
+        &Decision::B5UnkownContentType => context.request.is_put_or_post() && resource.acceptable_content_types
                 .iter().find(|ct| context.request.content_type().to_uppercase() == ct.to_uppercase() )
                 .is_none(),
+        &Decision::B4RequestEntityTooLarge => context.request.is_put_or_post() && !resource.valid_entity_length.as_ref()(context),
+        &Decision::B3Options => context.request.is_options(),
         _ => false
     }
 }
@@ -203,6 +223,13 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
     debug!("Decisions: {:?}", decisions);
     match state {
         Decision::End(status) => context.response.status = status,
+        Decision::A3Options => {
+            context.response.status = 200;
+            match resource.options.as_ref()(context, resource) {
+                Some(headers) => context.response.add_headers(headers),
+                None => ()
+            }
+        },
         _ => ()
     }
 }
