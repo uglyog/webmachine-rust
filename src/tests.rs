@@ -1,14 +1,17 @@
 use super::*;
 use super::sanitise_path;
-use super::{execute_state_machine, update_paths_for_resource};
+use super::{execute_state_machine, update_paths_for_resource, parse_header_values};
 use super::context::*;
+use super::headers::*;
 use expectest::prelude::*;
+use std::collections::HashMap;
 
 fn resource(path: &str) -> WebmachineRequest {
     WebmachineRequest {
         request_path: s!(path),
         base_path: s!("/"),
-        method: s!("GET")
+        method: s!("GET"),
+        headers: HashMap::new()
     }
 }
 
@@ -140,7 +143,9 @@ fn execute_state_machine_returns_405_if_method_is_not_allowed() {
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(405));
     expect(context.response.headers.get(&s!("Allow")).unwrap().clone()).to(be_equal_to(vec![
-        s!("OPTIONS"), s!("GET"), s!("HEAD")
+        HeaderValue::basic(s!("OPTIONS")),
+        HeaderValue::basic(s!("GET")),
+        HeaderValue::basic(s!("HEAD"))
     ]));
 }
 
@@ -165,7 +170,7 @@ fn execute_state_machine_returns_401_if_not_authorized() {
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(401));
     expect(context.response.headers.get(&s!("WWW-Authenticate")).unwrap().clone()).to(be_equal_to(vec![
-        s!("Basic realm=\"User Visible Realm\"")
+        HeaderValue::basic(s!("Basic realm=\"User Visible Realm\""))
     ]));
 }
 
@@ -178,4 +183,49 @@ fn execute_state_machine_returns_403_if_forbidden() {
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(403));
+}
+
+#[test]
+fn execute_state_machine_returns_501_if_there_is_an_unsupported_content_header() {
+    let mut context = WebmachineContext::default();
+    let resource = WebmachineResource {
+        unsupported_content_headers: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(501));
+}
+
+#[test]
+fn execute_state_machine_returns_415_if_the_content_type_is_unknown() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Content-type") => vec![HeaderValue::basic(s!("application/xml"))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        acceptable_content_types: vec![s!("application/json")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(415));
+}
+
+#[test]
+fn parse_header_test() {
+    expect(parse_header_values(s!("")).iter()).to(be_empty());
+    expect(parse_header_values(s!("HEADER A"))).to(be_equal_to(vec![s!("HEADER A")]));
+    expect(parse_header_values(s!("HEADER A, header B")))
+        .to(be_equal_to(vec![s!("HEADER A"), s!("header B")]));
+    expect(parse_header_values(s!("text/plain;  q=0.5,   text/html,text/x-dvi; q=0.8, text/x-c")))
+        .to(be_equal_to(vec![
+            HeaderValue { value: s!("text/plain"), params: hashmap!{s!("q") => s!("0.5")} },
+            HeaderValue { value: s!("text/html"), params: hashmap!{} },
+            HeaderValue { value: s!("text/x-dvi"), params: hashmap!{s!("q") => s!("0.8")} },
+            HeaderValue { value: s!("text/x-c"), params: hashmap!{} }
+        ]));
 }

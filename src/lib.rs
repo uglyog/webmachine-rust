@@ -22,8 +22,10 @@ macro_rules! s {
 }
 
 pub mod context;
+pub mod headers;
 
 use context::*;
+use headers::*;
 
 /// Struct to represent a resource in webmachine
 pub struct WebmachineResource {
@@ -48,7 +50,13 @@ pub struct WebmachineResource {
     pub not_authorized: Box<Fn(&mut WebmachineContext) -> Option<String>>,
     /// Is the request or client forbidden? Returning true will result in a '403 Forbidden' response.
     /// Defaults to false.
-    pub forbidden: Box<Fn(&mut WebmachineContext) -> bool>
+    pub forbidden: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// If the request includes any invalid Content-* headers, this should return true, which will
+    /// result in a '501 Not Implemented' response. Defaults to false.
+    pub unsupported_content_headers: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// The list of acceptable content types. Defaults to 'application/json'. If the content type
+    /// of the request is not in this list, a '415 Unsupported Media Type' response is returned.
+    pub acceptable_content_types: Vec<String>
 }
 
 impl WebmachineResource {
@@ -63,6 +71,8 @@ impl WebmachineResource {
             malformed_request: Box::new(|_| false),
             not_authorized: Box::new(|_| None),
             forbidden: Box::new(|_| false),
+            unsupported_content_headers: Box::new(|_| false),
+            acceptable_content_types: vec![s!("application/json")]
         }
     }
 }
@@ -89,7 +99,9 @@ enum Decision {
     B10MethodAllowed,
     B9MalformedRequest,
     B8Authorized,
-    B7Forbidden
+    B7Forbidden,
+    B6UnsupportedContentHeader,
+    B5UnkownContentType
 }
 
 impl Decision {
@@ -115,7 +127,9 @@ lazy_static! {
         Decision::B10MethodAllowed => Transition::Branch(Decision::B9MalformedRequest, Decision::End(405)),
         Decision::B9MalformedRequest => Transition::Branch(Decision::End(400), Decision::B8Authorized),
         Decision::B8Authorized => Transition::Branch(Decision::B7Forbidden, Decision::End(401)),
-        Decision::B7Forbidden => Transition::Branch(Decision::End(403), Decision::End(200))
+        Decision::B7Forbidden => Transition::Branch(Decision::End(403), Decision::B6UnsupportedContentHeader),
+        Decision::B6UnsupportedContentHeader => Transition::Branch(Decision::End(501), Decision::B5UnkownContentType),
+        Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::End(200))
     };
 }
 
@@ -130,7 +144,10 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()) {
                 Some(_) => true,
                 None => {
-                    context.response.add_header(s!("Allow"), resource.allowed_methods.clone());
+                    context.response.add_header(s!("Allow"), resource.allowed_methods
+                        .iter()
+                        .map(|s| HeaderValue::basic(s.clone()))
+                        .collect());
                     false
                 }
             }
@@ -138,12 +155,16 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::B9MalformedRequest => resource.malformed_request.as_ref()(context),
         &Decision::B8Authorized => match resource.not_authorized.as_ref()(context) {
             Some(realm) => {
-                context.response.add_header(s!("WWW-Authenticate"), vec![realm.clone()]);
+                context.response.add_header(s!("WWW-Authenticate"), vec![HeaderValue::parse_string(realm.clone())]);
                 false
             },
             None => true
         },
         &Decision::B7Forbidden => resource.forbidden.as_ref()(context),
+        &Decision::B6UnsupportedContentHeader => resource.unsupported_content_headers.as_ref()(context),
+        &Decision::B5UnkownContentType => resource.acceptable_content_types
+                .iter().find(|ct| context.request.content_type().to_uppercase() == ct.to_uppercase() )
+                .is_none(),
         _ => false
     }
 }
@@ -201,12 +222,27 @@ fn update_paths_for_resource(request: &mut WebmachineRequest, base_path: &String
     }
 }
 
+fn parse_header_values(value: String) -> Vec<HeaderValue> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        value.split(',').map(|s| HeaderValue::parse_string(s!(s.trim()))).collect()
+    }
+}
+
+fn headers_from_hyper_request(req: &Request) -> HashMap<String, Vec<HeaderValue>> {
+    req.headers.iter()
+        .map(|header| (s!(header.name()), parse_header_values(header.value_string())))
+        .collect()
+}
+
 fn request_from_hyper_request(req: &Request) -> WebmachineRequest {
     let request_path = extract_path(&req.uri);
     WebmachineRequest {
         request_path: request_path.clone(),
         base_path: s!("/"),
-        method: s!(req.method.as_ref())
+        method: s!(req.method.as_ref()),
+        headers: headers_from_hyper_request(req)
     }
 }
 
@@ -214,7 +250,7 @@ fn generate_hyper_response(context: &WebmachineContext, res: &mut Response) {
     *res.status_mut() = StatusCode::from_u16(context.response.status);
     for (header, values) in context.response.headers.clone() {
         let header = header.clone();
-        let header_values = values.iter().join(", ").into_bytes();
+        let header_values = values.iter().map(|h| h.to_string()).join(", ").into_bytes();
         res.headers_mut().set_raw(header, vec![header_values]);
     }
 }
