@@ -41,7 +41,14 @@ pub struct WebmachineResource {
     pub allowed_methods: Vec<String>,
     /// If the request is malformed, this should return true, which will result in a
     /// '400 Malformed Request' response. Defaults to false.
-    pub malformed_request: Box<Fn(&mut WebmachineContext) -> bool>
+    pub malformed_request: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// Is the client or request not authorized? Returning a Some<String>
+    /// will result in a '401 Unauthorized' response.  Defaults to None. If a Some(String) is
+    /// returned, the string will be used as the value in the WWW-Authenticate header.
+    pub not_authorized: Box<Fn(&mut WebmachineContext) -> Option<String>>,
+    /// Is the request or client forbidden? Returning true will result in a '403 Forbidden' response.
+    /// Defaults to false.
+    pub forbidden: Box<Fn(&mut WebmachineContext) -> bool>
 }
 
 impl WebmachineResource {
@@ -53,7 +60,9 @@ impl WebmachineResource {
                 s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")],
             uri_too_long: Box::new(|_| false),
             allowed_methods: vec![s!("OPTIONS"), s!("GET"), s!("HEAD")],
-            malformed_request: Box::new(|_| false)
+            malformed_request: Box::new(|_| false),
+            not_authorized: Box::new(|_| None),
+            forbidden: Box::new(|_| false),
         }
     }
 }
@@ -78,7 +87,9 @@ enum Decision {
     B12KnownMethod,
     B11UriTooLong,
     B10MethodAllowed,
-    B9MalformedRequest
+    B9MalformedRequest,
+    B8Authorized,
+    B7Forbidden
 }
 
 impl Decision {
@@ -102,7 +113,9 @@ lazy_static! {
         Decision::B12KnownMethod => Transition::Branch(Decision::B11UriTooLong, Decision::End(501)),
         Decision::B11UriTooLong => Transition::Branch(Decision::End(414), Decision::B10MethodAllowed),
         Decision::B10MethodAllowed => Transition::Branch(Decision::B9MalformedRequest, Decision::End(405)),
-        Decision::B9MalformedRequest => Transition::Branch(Decision::End(400), Decision::End(200))
+        Decision::B9MalformedRequest => Transition::Branch(Decision::End(400), Decision::B8Authorized),
+        Decision::B8Authorized => Transition::Branch(Decision::B7Forbidden, Decision::End(401)),
+        Decision::B7Forbidden => Transition::Branch(Decision::End(403), Decision::End(200))
     };
 }
 
@@ -123,6 +136,14 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             }
         },
         &Decision::B9MalformedRequest => resource.malformed_request.as_ref()(context),
+        &Decision::B8Authorized => match resource.not_authorized.as_ref()(context) {
+            Some(realm) => {
+                context.response.add_header(s!("WWW-Authenticate"), vec![realm.clone()]);
+                false
+            },
+            None => true
+        },
+        &Decision::B7Forbidden => resource.forbidden.as_ref()(context),
         _ => false
     }
 }

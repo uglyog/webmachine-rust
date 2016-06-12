@@ -154,3 +154,28 @@ fn execute_state_machine_returns_400_if_malformed_request() {
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(400));
 }
+
+#[test]
+fn execute_state_machine_returns_401_if_not_authorized() {
+    let mut context = WebmachineContext::default();
+    let resource = WebmachineResource {
+        not_authorized: Box::new(|_| Some(s!("Basic realm=\"User Visible Realm\""))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(401));
+    expect(context.response.headers.get(&s!("WWW-Authenticate")).unwrap().clone()).to(be_equal_to(vec![
+        s!("Basic realm=\"User Visible Realm\"")
+    ]));
+}
+
+#[test]
+fn execute_state_machine_returns_403_if_forbidden() {
+    let mut context = WebmachineContext::default();
+    let resource = WebmachineResource {
+        forbidden: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(403));
+}
