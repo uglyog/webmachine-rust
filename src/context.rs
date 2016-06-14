@@ -49,6 +49,19 @@ impl WebmachineRequest {
     pub fn is_options(&self) -> bool {
         self.method.to_uppercase() == "OPTIONS"
     }
+
+    /// If an Accept header exists
+    pub fn has_accept_header(&self) -> bool {
+        self.headers.keys().find(|k| k.to_uppercase() == "ACCEPT").is_some()
+    }
+
+    /// Returns the acceptable media types from the Accept header
+    pub fn accept(&self) -> Vec<HeaderValue> {
+        match self.headers.keys().find(|k| k.to_uppercase() == "ACCEPT") {
+            Some(header) => self.headers.get(header).unwrap().clone(),
+            None => Vec::new()
+        }
+    }
 }
 
 /// Response that is generated as a result of the webmachine execution
@@ -103,7 +116,9 @@ pub struct WebmachineContext {
     /// Request that the webmachine is executing against
     pub request: WebmachineRequest,
     /// Response that is the result of the execution
-    pub response: WebmachineResponse
+    pub response: WebmachineResponse,
+    /// selected media type after content negotiation
+    pub selected_media_type: Option<String>
 }
 
 impl WebmachineContext {
@@ -111,7 +126,8 @@ impl WebmachineContext {
     pub fn default() -> WebmachineContext {
         WebmachineContext {
             request: WebmachineRequest::default(),
-            response: WebmachineResponse::default()
+            response: WebmachineResponse::default(),
+            selected_media_type: None
         }
     }
 }

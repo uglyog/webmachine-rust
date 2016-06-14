@@ -106,9 +106,8 @@ impl HeaderValue {
     /// Parses a header value string into a HeaderValue struct
     pub fn parse_string(s: String) -> HeaderValue {
         if s.contains(';') {
-            let values = parse_header(s);
+            let values = parse_header(s.clone());
             let split = values.split_first().unwrap();
-            p!(split);
             HeaderValue {
                 value: split.0.clone(),
                 params: batch(split.1).iter()
@@ -152,6 +151,12 @@ impl PartialEq<HeaderValue> for HeaderValue {
 
 impl PartialEq<String> for HeaderValue {
     fn eq(&self, other: &String) -> bool {
+        self.value == *other
+    }
+}
+
+impl PartialEq<str> for HeaderValue {
+    fn eq(&self, other: &str) -> bool {
         self.value == *other
     }
 }

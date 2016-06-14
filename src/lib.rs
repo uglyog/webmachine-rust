@@ -24,6 +24,14 @@ macro_rules! s {
 pub mod context;
 pub mod headers;
 
+/// Simple macro to convert a string to a `HeaderValue` struct.
+#[macro_export]
+macro_rules! h {
+    ($e:expr) => (HeaderValue::parse_string($e.to_string()))
+}
+
+pub mod media_types;
+
 use context::*;
 use headers::*;
 
@@ -65,7 +73,9 @@ pub struct WebmachineResource {
     pub finish_request: Box<Fn(&mut WebmachineContext, &WebmachineResource)>,
     /// If the OPTIONS method is supported and is used, this return a HashMap of headers that
     // should appear in the response. Defaults to CORS headers.
-    pub options: Box<Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>
+    pub options: Box<Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>,
+    /// The list of content types that this resource produces. Defaults to 'application/json'.
+    pub produces: Vec<String>,
 }
 
 impl WebmachineResource {
@@ -84,7 +94,8 @@ impl WebmachineResource {
             acceptable_content_types: vec![s!("application/json")],
             valid_entity_length: Box::new(|_| true),
             finish_request: Box::new(|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
-            options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods)))
+            options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
+            produces: vec![s!("application/json")]
         }
     }
 }
@@ -116,7 +127,10 @@ enum Decision {
     B5UnkownContentType,
     B4RequestEntityTooLarge,
     B3Options,
-    A3Options
+    A3Options,
+    C3AcceptExists,
+    C4AcceptableMediaTypeExists,
+    C7NotAcceptable
 }
 
 impl Decision {
@@ -124,6 +138,7 @@ impl Decision {
         match self {
             &Decision::End(_) => true,
             &Decision::A3Options => true,
+            &Decision::C7NotAcceptable => true,
             _ => false
         }
     }
@@ -147,7 +162,9 @@ lazy_static! {
         Decision::B6UnsupportedContentHeader => Transition::Branch(Decision::End(501), Decision::B5UnkownContentType),
         Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::B4RequestEntityTooLarge),
         Decision::B4RequestEntityTooLarge => Transition::Branch(Decision::End(413), Decision::B3Options),
-        Decision::B3Options => Transition::Branch(Decision::A3Options, Decision::End(200)),
+        Decision::B3Options => Transition::Branch(Decision::A3Options, Decision::C3AcceptExists),
+        Decision::C3AcceptExists => Transition::Branch(Decision::C4AcceptableMediaTypeExists, Decision::End(200)),
+        Decision::C4AcceptableMediaTypeExists => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
     };
 }
 
@@ -185,6 +202,14 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 .is_none(),
         &Decision::B4RequestEntityTooLarge => context.request.is_put_or_post() && !resource.valid_entity_length.as_ref()(context),
         &Decision::B3Options => context.request.is_options(),
+        &Decision::C3AcceptExists => context.request.has_accept_header(),
+        &Decision::C4AcceptableMediaTypeExists => match media_types::matching_content_type(resource, &context.request) {
+            Some(media_type) => {
+                context.selected_media_type = Some(media_type);
+                true
+            },
+            None => false
+        },
         _ => false
     }
 }
@@ -230,6 +255,7 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
                 None => ()
             }
         },
+        Decision::C7NotAcceptable => context.response.status = 406,
         _ => ()
     }
 }
@@ -301,7 +327,8 @@ impl WebmachineDispatcher {
         let request = request_from_hyper_request(req);
         WebmachineContext {
             request: request,
-            response: WebmachineResponse::default()
+            response: WebmachineResponse::default(),
+            selected_media_type: None
         }
     }
 

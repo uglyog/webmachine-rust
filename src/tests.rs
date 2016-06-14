@@ -306,3 +306,22 @@ fn execute_state_machine_returns_headers_for_option_request() {
     expect(context.response.headers.get(&s!("A")).unwrap().clone()).to(be_equal_to(vec![s!("B")]));
     expect(context.response.headers.get(&s!("C")).unwrap().clone()).to(be_equal_to(vec![s!("D;E=F")]));
 }
+
+#[test]
+fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_content_type() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept") => vec![HeaderValue::basic(&s!("application/xml"))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        produces: vec![s!("application/javascript")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(406));
+}
