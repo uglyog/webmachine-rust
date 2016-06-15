@@ -325,3 +325,42 @@ fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(406));
 }
+
+#[test]
+fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_language() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![HeaderValue::basic(&s!("da"))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        produces_languages: vec![s!("en")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(406));
+}
+
+#[test]
+fn execute_state_machine_sets_the_language_header_if_the_request_does_have_an_acceptable_language() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![HeaderValue::basic(&s!("en-gb"))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        produces_languages: vec![s!("en")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(200));
+    expect(context.response.headers).to(be_equal_to(hashmap!{ s!("Content-Language") => vec![h!("en")] }));
+}

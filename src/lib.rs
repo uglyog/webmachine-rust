@@ -76,6 +76,9 @@ pub struct WebmachineResource {
     pub options: Box<Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>,
     /// The list of content types that this resource produces. Defaults to 'application/json'.
     pub produces: Vec<String>,
+    /// The list of content languages that this resource produces. Defaults to an empty list,
+    /// which represents all languages
+    pub produces_languages: Vec<String>
 }
 
 impl WebmachineResource {
@@ -95,7 +98,8 @@ impl WebmachineResource {
             valid_entity_length: Box::new(|_| true),
             finish_request: Box::new(|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
             options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
-            produces: vec![s!("application/json")]
+            produces: vec![s!("application/json")],
+            produces_languages: Vec::new()
         }
     }
 }
@@ -129,8 +133,10 @@ enum Decision {
     B3Options,
     A3Options,
     C3AcceptExists,
-    C4AcceptableMediaTypeExists,
-    C7NotAcceptable
+    C4AcceptableMediaTypeAvailable,
+    C7NotAcceptable,
+    D4AcceptLanguageExists,
+    D5AcceptableLanguageAvailable
 }
 
 impl Decision {
@@ -163,8 +169,10 @@ lazy_static! {
         Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::B4RequestEntityTooLarge),
         Decision::B4RequestEntityTooLarge => Transition::Branch(Decision::End(413), Decision::B3Options),
         Decision::B3Options => Transition::Branch(Decision::A3Options, Decision::C3AcceptExists),
-        Decision::C3AcceptExists => Transition::Branch(Decision::C4AcceptableMediaTypeExists, Decision::End(200)),
-        Decision::C4AcceptableMediaTypeExists => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
+        Decision::C3AcceptExists => Transition::Branch(Decision::C4AcceptableMediaTypeAvailable, Decision::D4AcceptLanguageExists),
+        Decision::C4AcceptableMediaTypeAvailable => Transition::Branch(Decision::D4AcceptLanguageExists, Decision::C7NotAcceptable),
+        Decision::D4AcceptLanguageExists => Transition::Branch(Decision::D5AcceptableLanguageAvailable, Decision::End(200)),
+        Decision::D5AcceptableLanguageAvailable => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
     };
 }
 
@@ -203,9 +211,20 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::B4RequestEntityTooLarge => context.request.is_put_or_post() && !resource.valid_entity_length.as_ref()(context),
         &Decision::B3Options => context.request.is_options(),
         &Decision::C3AcceptExists => context.request.has_accept_header(),
-        &Decision::C4AcceptableMediaTypeExists => match media_types::matching_content_type(resource, &context.request) {
+        &Decision::C4AcceptableMediaTypeAvailable => match media_types::matching_content_type(resource, &context.request) {
             Some(media_type) => {
                 context.selected_media_type = Some(media_type);
+                true
+            },
+            None => false
+        },
+        &Decision::D4AcceptLanguageExists => context.request.has_accept_language_header(),
+        &Decision::D5AcceptableLanguageAvailable => match media_types::matching_language(resource, &context.request) {
+            Some(language) => {
+                if language != "*" {
+                    context.selected_language = Some(language.clone());
+                    context.response.add_header(s!("Content-Language"), vec![HeaderValue::parse_string(language)]);
+                }
                 true
             },
             None => false
@@ -245,7 +264,6 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
         }
     }
     debug!("Final state is {:?}", state);
-    debug!("Decisions: {:?}", decisions);
     match state {
         Decision::End(status) => context.response.status = status,
         Decision::A3Options => {
@@ -328,7 +346,8 @@ impl WebmachineDispatcher {
         WebmachineContext {
             request: request,
             response: WebmachineResponse::default(),
-            selected_media_type: None
+            selected_media_type: None,
+            selected_language: None
         }
     }
 

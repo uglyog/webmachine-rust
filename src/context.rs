@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use headers::*;
-use itertools::Itertools;
 
 /// Request that the state machine is executing against
 pub struct WebmachineRequest {
@@ -52,12 +51,33 @@ impl WebmachineRequest {
 
     /// If an Accept header exists
     pub fn has_accept_header(&self) -> bool {
-        self.headers.keys().find(|k| k.to_uppercase() == "ACCEPT").is_some()
+        self.has_header(&s!("ACCEPT"))
     }
 
     /// Returns the acceptable media types from the Accept header
     pub fn accept(&self) -> Vec<HeaderValue> {
-        match self.headers.keys().find(|k| k.to_uppercase() == "ACCEPT") {
+        self.find_header(&s!("ACCEPT"))
+    }
+
+    /// If an Accept-Language header exists
+    pub fn has_accept_language_header(&self) -> bool {
+        self.has_header(&s!("ACCEPT-LANGUAGE"))
+    }
+
+    /// Returns the acceptable languages from the Accept-Language header
+    pub fn accept_language(&self) -> Vec<HeaderValue> {
+        self.find_header(&s!("ACCEPT-LANGUAGE"))
+    }
+
+    /// If the request has the provided header
+    pub fn has_header(&self, header: &String) -> bool {
+        self.headers.keys().find(|k| k.to_uppercase() == header.to_uppercase()).is_some()
+    }
+
+    /// Returns the list of values for the provided request header. If the header is not present,
+    /// or has no value, and empty vector is returned.
+    pub fn find_header(&self, header: &String) -> Vec<HeaderValue> {
+        match self.headers.keys().find(|k| k.to_uppercase() == header.to_uppercase()) {
             Some(header) => self.headers.get(header).unwrap().clone(),
             None => Vec::new()
         }
@@ -118,7 +138,9 @@ pub struct WebmachineContext {
     /// Response that is the result of the execution
     pub response: WebmachineResponse,
     /// selected media type after content negotiation
-    pub selected_media_type: Option<String>
+    pub selected_media_type: Option<String>,
+    /// selected language after content negotiation
+    pub selected_language: Option<String>
 }
 
 impl WebmachineContext {
@@ -127,15 +149,8 @@ impl WebmachineContext {
         WebmachineContext {
             request: WebmachineRequest::default(),
             response: WebmachineResponse::default(),
-            selected_media_type: None
+            selected_media_type: None,
+            selected_language: None
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use expectest::prelude::*;
-
-
 }

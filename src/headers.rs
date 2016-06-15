@@ -210,5 +210,9 @@ mod tests {
             value: s!("A"),
             params: hashmap!{ s!("b") => s!("c,d") }
         }));
+        expect!(HeaderValue::parse_string(s!("en;q=0.0"))).to(be_equal_to(HeaderValue {
+            value: s!("en"),
+            params: hashmap!{ s!("q") => s!("0.0") }
+        }));
     }
 }

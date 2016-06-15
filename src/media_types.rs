@@ -112,7 +112,7 @@ fn sort_media_types(media_types: &Vec<HeaderValue>) -> Vec<HeaderValue> {
     })
 }
 
-/// Determines if the media types produces by the resource matches the acceptable media types
+/// Determines if the media types produced by the resource matches the acceptable media types
 /// provided by the client. Returns the match if there is one.
 pub fn matching_content_type(resource: &WebmachineResource, request: &WebmachineRequest) -> Option<String> {
     if request.has_accept_header() {
@@ -134,6 +134,111 @@ pub fn matching_content_type(resource: &WebmachineResource, request: &Webmachine
     }
 }
 
+/// Struct to represent a media language
+#[derive(Debug, Clone, PartialEq)]
+pub struct MediaLanguage {
+    /// Main type of the media language
+    pub main: String,
+    /// Sub type of the media language
+    pub sub: String,
+    /// Weight associated with the media language
+    pub weight: f32
+}
+
+impl MediaLanguage {
+    /// Parse a string into a MediaLanguage struct
+    pub fn parse_string(language: &String) -> MediaLanguage {
+        let types: Vec<&str> = language.splitn(2, '-').collect_vec();
+        if types.is_empty() || types[0].is_empty() {
+            MediaLanguage {
+                main: s!("*"),
+                sub: s!(""),
+                weight: 1.0
+            }
+        } else {
+            MediaLanguage {
+                main: s!(types[0]),
+                sub: if types.len() == 1 || types[1].is_empty() { s!("") } else { s!(types[1]) },
+                weight: 1.0
+            }
+        }
+    }
+
+    /// Adds a quality weight to the media language
+    pub fn with_weight(&self, weight: &String) -> MediaLanguage {
+        MediaLanguage {
+            main: self.main.clone(),
+            sub: self.sub.clone(),
+            weight: weight.parse().unwrap_or(1.0)
+        }
+    }
+
+    /// If this media language matches the other media language
+    pub fn matches(&self, other: &MediaLanguage) -> bool {
+        if other.main == "*" || (self.main == other.main && self.sub == other.sub) {
+            true
+        } else {
+            let check = format!("{}-", self.to_string());
+            other.to_string().starts_with(&check)
+        }
+    }
+
+    /// Converts this media language into a string
+    pub fn to_string(&self) -> String {
+        if self.sub.is_empty() {
+            self.main.clone()
+        } else {
+            format!("{}-{}", self.main, self.sub)
+        }
+    }
+}
+
+impl HeaderValue {
+    /// Converts the header value into a media type
+    pub fn as_media_language(&self) -> MediaLanguage {
+        if self.params.contains_key(&s!("q")) {
+            MediaLanguage::parse_string(&self.value).with_weight(self.params.get(&s!("q")).unwrap())
+        } else {
+            MediaLanguage::parse_string(&self.value)
+        }
+    }
+}
+
+fn sort_media_languages(media_languages: &Vec<HeaderValue>) -> Vec<MediaLanguage> {
+    media_languages.into_iter()
+        .cloned()
+        .map(|lang| lang.as_media_language())
+        .filter(|lang| lang.weight > 0.0)
+        .sorted_by(|a, b| {
+            let weight_a = a.weight;
+            let weight_b = b.weight;
+            weight_b.partial_cmp(&weight_a).unwrap_or(Ordering::Greater)
+        })
+}
+
+/// Determines if the languages produced by the resource matches the acceptable languages
+/// provided by the client. Returns the match if there is one.
+pub fn matching_language(resource: &WebmachineResource, request: &WebmachineRequest) -> Option<String> {
+    if request.has_accept_language_header() && !request.accept_language().is_empty() {
+        let acceptable_languages = sort_media_languages(&request.accept_language());
+        if resource.produces_languages.is_empty() {
+            acceptable_languages.first().map(|lang| lang.to_string())
+        } else {
+            acceptable_languages.iter()
+                .cartesian_product(resource.produces_languages.iter())
+                .map(|(acceptable_language, produced_language)| {
+                    let produced_language = MediaLanguage::parse_string(produced_language);
+                    (produced_language.clone(), produced_language.matches(&acceptable_language))
+                })
+                .find(|val| val.1)
+                .map(|result| result.0.to_string())
+        }
+    } else if resource.produces_languages.is_empty() {
+        Some(s!("*"))
+    } else {
+        resource.produces_languages.first().cloned()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -285,5 +390,177 @@ mod tests {
         expect!(media_type.matches(&MediaType { main: s!("application"), sub: s!("*"), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::SubStar));
         expect!(media_type.matches(&MediaType { main: s!("*"), sub: s!("*"), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::Star));
         expect!(media_type.matches(&MediaType { main: s!("application"), sub: s!("application"), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::None));
+    }
+
+    #[test]
+    fn matching_language_matches_if_no_accept_header_is_provided() {
+        let resource = WebmachineResource {
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_some().value("*"));
+    }
+
+    #[test]
+    fn matching_language_matches_if_the_resource_does_not_define_any_language() {
+        let resource = WebmachineResource {
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![h!("en-gb")]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_some().value("en-gb"));
+    }
+
+    #[test]
+    fn matching_language_matches_if_the_request_language_is_empty() {
+        let resource = WebmachineResource {
+            produces_languages: vec![s!("x-pig-latin")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => Vec::new()
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_some().value("x-pig-latin"));
+    }
+
+    #[test]
+    fn matching_language_matches_exact_language() {
+        let resource = WebmachineResource {
+            produces_languages: vec![s!("en-gb")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![h!("en-gb")]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_some().value("en-gb"));
+    }
+
+    #[test]
+    fn matching_language_wild_card() {
+        let resource = WebmachineResource {
+            produces_languages: vec![s!("en-gb")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![h!("*")]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_some().value("en-gb"));
+    }
+
+    #[test]
+    fn matching_language_matches_prefix() {
+        let resource = WebmachineResource {
+            produces_languages: vec![s!("en")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![h!("en-gb")]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_some().value("en"));
+    }
+
+    #[test]
+    fn matching_language_does_not_match_prefix_if_it_does_not_end_with_dash() {
+        let resource = WebmachineResource {
+            produces_languages: vec![s!("e")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![h!("en-gb")]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_none());
+    }
+
+    #[test]
+    fn matching_language_does_not_match_if_quality_is_zero() {
+        let resource = WebmachineResource {
+            produces_languages: vec![s!("en")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![h!("en-gb;q=0")]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_none());
+    }
+
+    #[test]
+    fn matching_language_does_not_match_wildcard_if_quality_is_zero() {
+        let resource = WebmachineResource {
+            produces_languages: vec![s!("en")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![h!("*;q=0")]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource, &request)).to(be_none());
+    }
+
+    #[test]
+    fn matches_most_specific_language() {
+        let resource1 = WebmachineResource {
+            .. WebmachineResource::default()
+        };
+        let resource2 = WebmachineResource {
+            produces_languages: vec![s!("en-gb")],
+            .. WebmachineResource::default()
+        };
+        let resource3 = WebmachineResource {
+            produces_languages: vec![s!("en")],
+            .. WebmachineResource::default()
+        };
+        let resource4 = WebmachineResource {
+            produces_languages: vec![s!("en-gb"), s!("da")],
+            .. WebmachineResource::default()
+        };
+        let request = WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Language") => vec![
+                    h!("da"),
+                    h!("en-gb;q=0.8"),
+                    h!("en;q=0.7")
+                ]
+            },
+            .. WebmachineRequest::default()
+        };
+        expect!(matching_language(&resource1, &request)).to(be_some().value("da"));
+        expect!(matching_language(&resource2, &request)).to(be_some().value("en-gb"));
+        expect!(matching_language(&resource3, &request)).to(be_some().value("en"));
+        expect!(matching_language(&resource4, &request)).to(be_some().value("da"));
+    }
+
+    #[test]
+    fn language_matches_test() {
+        expect!(MediaLanguage::parse_string(&s!("en")).matches(&MediaLanguage::parse_string(&s!("en")))).to(be_true());
+        expect!(MediaLanguage::parse_string(&s!("en")).matches(&MediaLanguage::parse_string(&s!("dn")))).to(be_false());
+        expect!(MediaLanguage::parse_string(&s!("en-gb")).matches(&MediaLanguage::parse_string(&s!("en-gb")))).to(be_true());
+        expect!(MediaLanguage::parse_string(&s!("en-gb")).matches(&MediaLanguage::parse_string(&s!("*")))).to(be_true());
+        expect!(MediaLanguage::parse_string(&s!("en")).matches(&MediaLanguage::parse_string(&s!("en-gb")))).to(be_true());
     }
 }
