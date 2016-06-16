@@ -1,7 +1,7 @@
 //! The `context` module encapsulates the context of the environment that the webmachine is
 //! executing in. Basically wraps the request and response.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use headers::*;
 
 /// Request that the state machine is executing against
@@ -103,6 +103,17 @@ impl WebmachineRequest {
             None => Vec::new()
         }
     }
+
+    /// If the header has a matching value
+    pub fn has_header_value(&self, header: &String, value: &String) -> bool {
+        match self.headers.keys().find(|k| k.to_uppercase() == header.to_uppercase()) {
+            Some(header) => match self.headers.get(header).unwrap().iter().find(|val| *val == value) {
+                Some(_) => true,
+                None => false
+            },
+            None => false
+        }
+    }
 }
 
 /// Response that is generated as a result of the webmachine execution
@@ -111,7 +122,7 @@ pub struct WebmachineResponse {
     /// status code to return
     pub status: u16,
     /// headers to return
-    pub headers: HashMap<String, Vec<HeaderValue>>
+    pub headers: BTreeMap<String, Vec<HeaderValue>>
 }
 
 impl WebmachineResponse {
@@ -119,7 +130,7 @@ impl WebmachineResponse {
     pub fn default() -> WebmachineResponse {
         WebmachineResponse {
             status: 200,
-            headers: HashMap::new()
+            headers: BTreeMap::new()
         }
     }
 
@@ -187,4 +198,54 @@ impl WebmachineContext {
             selected_encoding: None
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use headers::*;
+    use expectest::prelude::*;
+
+    #[test]
+    fn request_does_not_have_header_test() {
+        let request = WebmachineRequest {
+            .. WebmachineRequest::default()
+        };
+        expect!(request.has_header(&s!("Vary"))).to(be_false());
+        expect!(request.has_header_value(&s!("Vary"), &s!("*"))).to(be_false());
+    }
+
+    #[test]
+    fn request_with_empty_header_test() {
+        let request = WebmachineRequest {
+            headers: hashmap!{ s!("HeaderA") => Vec::new() },
+            .. WebmachineRequest::default()
+        };
+        expect!(request.has_header(&s!("HeaderA"))).to(be_true());
+        expect!(request.has_header_value(&s!("HeaderA"), &s!("*"))).to(be_false());
+    }
+
+    #[test]
+    fn request_with_header_single_value_test() {
+        let request = WebmachineRequest {
+            headers: hashmap!{ s!("HeaderA") => vec![h!("*")] },
+            .. WebmachineRequest::default()
+        };
+        expect!(request.has_header(&s!("HeaderA"))).to(be_true());
+        expect!(request.has_header_value(&s!("HeaderA"), &s!("*"))).to(be_true());
+        expect!(request.has_header_value(&s!("HeaderA"), &s!("other"))).to(be_false());
+    }
+
+    #[test]
+    fn request_with_header_multiple_value_test() {
+        let request = WebmachineRequest {
+            headers: hashmap!{ s!("HeaderA") => vec![h!("*"), h!("other")]},
+            .. WebmachineRequest::default()
+        };
+        expect!(request.has_header(&s!("HeaderA"))).to(be_true());
+        expect!(request.has_header_value(&s!("HeaderA"), &s!("*"))).to(be_true());
+        expect!(request.has_header_value(&s!("HeaderA"), &s!("other"))).to(be_true());
+        expect!(request.has_header_value(&s!("HeaderA"), &s!("other2"))).to(be_false());
+    }
+
 }

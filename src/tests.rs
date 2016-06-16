@@ -349,7 +349,7 @@ fn execute_state_machine_sets_content_type_header_if_the_request_does_have_an_ac
     execute_state_machine(&mut context, &resource);
     finalise_response(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(200));
-    expect(context.response.headers).to(be_equal_to(hashmap!{ s!("Content-Type") => vec![h!("application/xml;charset=ISO-8859-1")] }));
+    expect(context.response.headers).to(be_equal_to(btreemap!{ s!("Content-Type") => vec![h!("application/xml;charset=ISO-8859-1")] }));
 }
 
 #[test]
@@ -388,7 +388,7 @@ fn execute_state_machine_sets_the_language_header_if_the_request_does_have_an_ac
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(200));
-    expect(context.response.headers).to(be_equal_to(hashmap!{ s!("Content-Language") => vec![h!("en")] }));
+    expect(context.response.headers).to(be_equal_to(btreemap!{ s!("Content-Language") => vec![h!("en")] }));
 }
 
 #[test]
@@ -428,7 +428,7 @@ fn execute_state_machine_sets_the_charset_if_the_request_does_have_an_acceptable
     execute_state_machine(&mut context, &resource);
     finalise_response(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(200));
-    expect(context.response.headers).to(be_equal_to(hashmap!{ s!("Content-Type") => vec![h!("application/json;charset=UTF-8")] }));
+    expect(context.response.headers).to(be_equal_to(btreemap!{ s!("Content-Type") => vec![h!("application/json;charset=UTF-8")] }));
 }
 
 #[test]
@@ -448,4 +448,60 @@ fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(406));
+}
+
+#[test]
+fn execute_state_machine_sets_the_vary_header_if_the_resource_has_variances() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        variances: vec![s!("HEADER-A"), s!("HEADER-B")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    finalise_response(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(200));
+    expect(context.response.headers).to(be_equal_to(btreemap!{
+        s!("Content-Type") => vec![h!("application/json;charset=ISO-8859-1")],
+        s!("Vary") => vec![h!("HEADER-A"), h!("HEADER-B")]
+    }));
+}
+
+#[test]
+fn execute_state_machine_returns_404_if_the_resource_does_not_exist() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| false),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(404));
+}
+
+#[test]
+fn execute_state_machine_returns_412_if_the_resource_does_not_exist_and_there_is_an_if_match_header() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("If-Match") => vec![h!("*")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| false),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(412));
 }

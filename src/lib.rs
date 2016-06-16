@@ -16,12 +16,10 @@ use hyper::status::StatusCode;
 use itertools::Itertools;
 
 /// Simple macro to convert a string slice to a `String` struct.
-#[macro_export]
 macro_rules! s {
     ($e:expr) => ($e.to_string())
 }
 
-pub mod context;
 pub mod headers;
 
 /// Simple macro to convert a string to a `HeaderValue` struct.
@@ -29,6 +27,7 @@ macro_rules! h {
     ($e:expr) => (HeaderValue::parse_string($e.to_string()))
 }
 
+pub mod context;
 pub mod content_negotiation;
 
 use context::*;
@@ -90,7 +89,15 @@ pub struct WebmachineResource {
     pub charsets_provided: Vec<String>,
     /// The list of encodings your resource wants to provide. The encoding will be applied to the
     /// response body automatically by Webmachine. Default includes only the 'identity' encoding.
-    pub encodings_provided: Vec<String>
+    pub encodings_provided: Vec<String>,
+    /// The list of header names that should be included in the response's Vary header. The standard
+    /// content negotiation headers (Accept, Accept-Encoding, Accept-Charset, Accept-Language) do
+    /// not need to be specified here as Webmachine will add the correct elements of those
+    /// automatically depending on resource behavior. Default is an empty list.
+    pub variances: Vec<String>,
+    /// Does the resource exist? Returning a false value will result in a '404 Not Found' response
+    /// unless it is a PUT or POST. Defaults to true.
+    pub resource_exists: Box<Fn(&mut WebmachineContext) -> bool>,
 }
 
 impl WebmachineResource {
@@ -114,7 +121,9 @@ impl WebmachineResource {
             produces: vec![s!("application/json")],
             languages_provided: Vec::new(),
             charsets_provided: Vec::new(),
-            encodings_provided: vec![s!("identity")]
+            encodings_provided: vec![s!("identity")],
+            variances: Vec::new(),
+            resource_exists: Box::new(|_| true),
         }
     }
 }
@@ -157,7 +166,9 @@ enum Decision {
     E5AcceptCharsetExists,
     E6AcceptableCharsetAvailable,
     F6AcceptEncodingExists,
-    F7AcceptableEncodingAvailable
+    F7AcceptableEncodingAvailable,
+    G7ResourceExists,
+    H7IfMatchStarExists,
 }
 
 impl Decision {
@@ -196,8 +207,10 @@ lazy_static! {
         Decision::D5AcceptableLanguageAvailable => Transition::Branch(Decision::E5AcceptCharsetExists, Decision::C7NotAcceptable),
         Decision::E5AcceptCharsetExists => Transition::Branch(Decision::E6AcceptableCharsetAvailable, Decision::F6AcceptEncodingExists),
         Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::F6AcceptEncodingExists, Decision::C7NotAcceptable),
-        Decision::F6AcceptEncodingExists => Transition::Branch(Decision::F7AcceptableEncodingAvailable, Decision::End(200)),
-        Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
+        Decision::F6AcceptEncodingExists => Transition::Branch(Decision::F7AcceptableEncodingAvailable, Decision::G7ResourceExists),
+        Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::G7ResourceExists, Decision::C7NotAcceptable),
+        Decision::G7ResourceExists => Transition::Branch(Decision::End(200), Decision::H7IfMatchStarExists),
+        Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::End(200)),
     };
 }
 
@@ -275,6 +288,8 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             },
             None => false
         },
+        &Decision::G7ResourceExists => resource.resource_exists.as_ref()(context),
+        &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
         _ => false
     }
 }
@@ -383,6 +398,14 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
             params: hashmap!{ s!("charset") => charset }
         };
         context.response.add_header(s!("Content-Type"), vec![header]);
+    }
+
+    if !resource.variances.is_empty() && !context.response.has_header(&s!("Vary")) {
+        context.response.add_header(s!("Vary"), resource.variances
+            .iter()
+            .map(|h| HeaderValue::parse_string(h.clone()))
+            .collect()
+        );
     }
 
     match &resource.finalise_response {

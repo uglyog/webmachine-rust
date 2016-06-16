@@ -6,6 +6,7 @@ use std::iter::Peekable;
 use itertools::Itertools;
 
 const SEPERATORS: [char; 10] = ['(', ')', '<', '>', '@', ',', ';', '=', '{', '}'];
+const VALUE_SEPERATORS: [char; 9] = ['(', ')', '<', '>', '@', ',', ';', '{', '}'];
 
 fn batch(values: &[String]) -> Vec<(String, String)> {
     values.into_iter().batching(|mut it| {
@@ -19,11 +20,32 @@ fn batch(values: &[String]) -> Vec<(String, String)> {
     }).collect()
 }
 
-// value -> [^SEP]*
+// value -> [^SEP]* | quoted-string
 fn header_value(chars: &mut Peekable<Chars>, seperators: &[char]) -> String {
     let mut value = String::new();
-    while chars.peek().is_some() && !seperators.contains(chars.peek().unwrap()) {
-        value.push(chars.next().unwrap())
+    skip_whitespace(chars);
+    if chars.peek().is_some() && chars.peek().unwrap() == &'"' {
+        chars.next();
+        while chars.peek().is_some() && chars.peek().unwrap() != &'"' {
+            let ch = chars.next().unwrap();
+            match ch {
+                '\\' => {
+                    if chars.peek().is_some() {
+                        value.push(chars.next().unwrap());
+                    } else {
+                        value.push(ch);
+                    }
+                },
+                _ => value.push(ch)
+            }
+        }
+        if chars.peek().is_some() {
+            chars.next();
+        }
+    } else {
+        while chars.peek().is_some() && !seperators.contains(chars.peek().unwrap()) {
+            value.push(chars.next().unwrap())
+        }
     }
     s!(value.trim())
 }
@@ -31,7 +53,7 @@ fn header_value(chars: &mut Peekable<Chars>, seperators: &[char]) -> String {
 // header -> value [; parameters]
 fn parse_header(s: String) -> Vec<String> {
     let mut chars = s.chars().peekable();
-    let header_value = header_value(&mut chars, &SEPERATORS);
+    let header_value = header_value(&mut chars, &VALUE_SEPERATORS);
     let mut values = vec![header_value];
     if chars.peek().is_some() && chars.peek().unwrap() == &';' {
         chars.next();
@@ -105,9 +127,11 @@ pub struct HeaderValue {
 impl HeaderValue {
     /// Parses a header value string into a HeaderValue struct
     pub fn parse_string(s: String) -> HeaderValue {
-        if s.contains(';') {
-            let values = parse_header(s.clone());
-            let split = values.split_first().unwrap();
+        let values = parse_header(s.clone());
+        let split = values.split_first().unwrap();
+        if split.1.is_empty() {
+            HeaderValue::basic(&split.0)
+        } else {
             HeaderValue {
                 value: split.0.clone(),
                 params: batch(split.1).iter()
@@ -118,8 +142,6 @@ impl HeaderValue {
                         map
                     })
             }
-        } else {
-            HeaderValue::basic(&s)
         }
     }
 
@@ -213,6 +235,18 @@ mod tests {
         expect!(HeaderValue::parse_string(s!("en;q=0.0"))).to(be_equal_to(HeaderValue {
             value: s!("en"),
             params: hashmap!{ s!("q") => s!("0.0") }
+        }));
+    }
+
+    #[test]
+    fn parse_qouted_header_value_test() {
+        expect!(HeaderValue::parse_string(s!("\"*\""))).to(be_equal_to(HeaderValue {
+            value: s!("*"),
+            params: hashmap!{}
+        }));
+        expect!(HeaderValue::parse_string(s!(" \"quoted; value\""))).to(be_equal_to(HeaderValue {
+            value: s!("quoted; value"),
+            params: hashmap!{}
         }));
     }
 }
