@@ -269,7 +269,7 @@ impl Charset {
         }
     }
 
-    /// If this media language matches the other media language
+    /// If this media charset matches the other media charset
     pub fn matches(&self, other: &Charset) -> bool {
         other.charset == "*" || (self.charset.to_uppercase() == other.charset.to_uppercase())
     }
@@ -298,7 +298,6 @@ pub fn sort_media_charsets(charsets: &Vec<HeaderValue>) -> Vec<Charset> {
     if charsets.iter().find(|cs| cs.value == "*" || cs.value.to_uppercase() == "ISO-8859-1").is_none() {
         charsets.push(h!("ISO-8859-1"));
     }
-    p!(charsets);
     charsets.into_iter()
         .map(|cs| cs.as_charset())
         .filter(|cs| cs.weight > 0.0)
@@ -330,5 +329,100 @@ pub fn matching_charset(resource: &WebmachineResource, request: &WebmachineReque
         Some(s!("ISO-8859-1"))
     } else {
         resource.charsets_provided.first().cloned()
+    }
+}
+
+/// Struct to represent an encoding
+#[derive(Debug, Clone, PartialEq)]
+pub struct Encoding {
+    /// Encoding string
+    pub encoding: String,
+    /// Weight associated with the encoding
+    pub weight: f32
+}
+
+impl Encoding {
+    /// Parse a string into a Charset struct
+    pub fn parse_string(encoding: &String) -> Encoding {
+        Encoding {
+            encoding: encoding.clone(),
+            weight: 1.0
+        }
+    }
+
+    /// Adds a quality weight to the charset
+    pub fn with_weight(&self, weight: &String) -> Encoding {
+        Encoding {
+            encoding: self.encoding.clone(),
+            weight: weight.parse().unwrap_or(1.0)
+        }
+    }
+
+    /// If this encoding matches the other encoding
+    pub fn matches(&self, other: &Encoding) -> bool {
+        other.encoding == "*" || (self.encoding.to_lowercase() == other.encoding.to_lowercase())
+    }
+
+    /// Converts this encoding into a string
+    pub fn to_string(&self) -> String {
+        self.encoding.clone()
+    }
+}
+
+impl HeaderValue {
+    /// Converts the header value into a media type
+    pub fn as_encoding(&self) -> Encoding {
+        if self.params.contains_key(&s!("q")) {
+            Encoding::parse_string(&self.value).with_weight(self.params.get(&s!("q")).unwrap())
+        } else {
+            Encoding::parse_string(&self.value)
+        }
+    }
+}
+
+/// Sorts the list of encodings by weighting as per https://tools.ietf.org/html/rfc2616#section-14.3.
+/// Note that identity encoding is awlays added with a weight of 1 if not already present.
+pub fn sort_encodings(encodings: &Vec<HeaderValue>) -> Vec<Encoding> {
+    let mut encodings = encodings.clone();
+    if encodings.iter().find(|e| e.value == "*" || e.value.to_lowercase() == "identity").is_none() {
+        encodings.push(h!("identity"));
+    }
+    encodings.into_iter()
+        .map(|encoding| encoding.as_encoding())
+        .filter(|encoding| encoding.weight > 0.0)
+        .sorted_by(|a, b| {
+            let weight_a = a.weight;
+            let weight_b = b.weight;
+            weight_b.partial_cmp(&weight_a).unwrap_or(Ordering::Greater)
+        })
+}
+
+/// Determines if the encodings supported by the resource matches the acceptable encodings
+/// provided by the client. Returns the match if there is one.
+pub fn matching_encoding(resource: &WebmachineResource, request: &WebmachineRequest) -> Option<String> {
+    let identity = Encoding::parse_string(&s!("identity"));
+    if request.has_accept_encoding_header() {
+        let acceptable_encodings = sort_encodings(&request.accept_encoding());
+        p!(acceptable_encodings);
+        if resource.encodings_provided.is_empty() {
+            if acceptable_encodings.contains(&identity) {
+                Some(s!("identity"))
+            } else {
+                None
+            }
+        } else {
+            acceptable_encodings.iter()
+                .cartesian_product(resource.encodings_provided.iter())
+                .map(|(acceptable_encoding, provided_encoding)| {
+                    let provided_encoding = Encoding::parse_string(provided_encoding);
+                    (provided_encoding.clone(), provided_encoding.matches(&acceptable_encoding))
+                })
+                .find(|val| val.1)
+                .map(|result| { p!(result); result.0.to_string() })
+        }
+    } else if resource.encodings_provided.is_empty() {
+        Some(s!("identity"))
+    } else {
+        resource.encodings_provided.first().cloned()
     }
 }

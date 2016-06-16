@@ -36,6 +36,9 @@ use headers::*;
 
 /// Struct to represent a resource in webmachine
 pub struct WebmachineResource {
+    /// This is called just before the final response is constructed and sent. It allows the resource
+    /// an opportunity to modify the response after the webmachine has executed.
+    pub finalise_response: Option<Box<Fn(&mut WebmachineContext)>>,
     /// Is the resource available? Returning false will result in a '503 Service Not Available'
     /// response. Defaults to true. If the resource is only temporarily not available,
     /// add a 'Retry-After' response header.
@@ -84,13 +87,17 @@ pub struct WebmachineResource {
     /// The list of charsets that this resource provides. Defaults to an empty list,
     /// which represents all charsets with ISO-8859-1 as the default. If more than one is provided,
     /// and the client does not supply an Accept-Charset header, the first one will be selected.
-    pub charsets_provided: Vec<String>
+    pub charsets_provided: Vec<String>,
+    /// The list of encodings your resource wants to provide. The encoding will be applied to the
+    /// response body automatically by Webmachine. Default includes only the 'identity' encoding.
+    pub encodings_provided: Vec<String>
 }
 
 impl WebmachineResource {
     /// Creates a default webmachine resource
     pub fn default() -> WebmachineResource {
         WebmachineResource {
+            finalise_response: None,
             available: Box::new(|_| true),
             known_methods: vec![s!("OPTIONS"), s!("GET"), s!("POST"), s!("PUT"), s!("DELETE"),
                 s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")],
@@ -106,7 +113,8 @@ impl WebmachineResource {
             options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
             produces: vec![s!("application/json")],
             languages_provided: Vec::new(),
-            charsets_provided: Vec::new()
+            charsets_provided: Vec::new(),
+            encodings_provided: vec![s!("identity")]
         }
     }
 }
@@ -147,7 +155,9 @@ enum Decision {
     D4AcceptLanguageExists,
     D5AcceptableLanguageAvailable,
     E5AcceptCharsetExists,
-    E6AcceptableCharsetAvailable
+    E6AcceptableCharsetAvailable,
+    F6AcceptEncodingExists,
+    F7AcceptableEncodingAvailable
 }
 
 impl Decision {
@@ -184,8 +194,10 @@ lazy_static! {
         Decision::C4AcceptableMediaTypeAvailable => Transition::Branch(Decision::D4AcceptLanguageExists, Decision::C7NotAcceptable),
         Decision::D4AcceptLanguageExists => Transition::Branch(Decision::D5AcceptableLanguageAvailable, Decision::E5AcceptCharsetExists),
         Decision::D5AcceptableLanguageAvailable => Transition::Branch(Decision::E5AcceptCharsetExists, Decision::C7NotAcceptable),
-        Decision::E5AcceptCharsetExists => Transition::Branch(Decision::E6AcceptableCharsetAvailable, Decision::End(200)),
-        Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
+        Decision::E5AcceptCharsetExists => Transition::Branch(Decision::E6AcceptableCharsetAvailable, Decision::F6AcceptEncodingExists),
+        Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::F6AcceptEncodingExists, Decision::C7NotAcceptable),
+        Decision::F6AcceptEncodingExists => Transition::Branch(Decision::F7AcceptableEncodingAvailable, Decision::End(200)),
+        Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
     };
 }
 
@@ -247,6 +259,17 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             Some(charset) => {
                 if charset != "*" {
                     context.selected_charset = Some(charset.clone());
+                }
+                true
+            },
+            None => false
+        },
+        &Decision::F6AcceptEncodingExists => context.request.has_accept_encoding_header(),
+        &Decision::F7AcceptableEncodingAvailable => match content_negotiation::matching_encoding(resource, &context.request) {
+            Some(encoding) => {
+                context.selected_encoding = Some(encoding.clone());
+                if encoding != "identity" {
+                    context.response.add_header(s!("Content-Encoding"), vec![HeaderValue::parse_string(encoding)]);
                 }
                 true
             },
@@ -345,6 +368,31 @@ fn request_from_hyper_request(req: &Request) -> WebmachineRequest {
     }
 }
 
+fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResource) {
+    if !context.response.has_header(&s!("Content-Type")) {
+        let media_type = match &context.selected_media_type {
+            &Some(ref media_type) => media_type.clone(),
+            &None => s!("application/json")
+        };
+        let charset = match &context.selected_charset {
+            &Some(ref charset) => charset.clone(),
+            &None => s!("ISO-8859-1")
+        };
+        let header = HeaderValue {
+            value: media_type,
+            params: hashmap!{ s!("charset") => charset }
+        };
+        context.response.add_header(s!("Content-Type"), vec![header]);
+    }
+
+    match &resource.finalise_response {
+        &Some(ref callback) => callback.as_ref()(context),
+        &None => ()
+    }
+
+    debug!("Final response: {:?}", context.response);
+}
+
 fn generate_hyper_response(context: &WebmachineContext, res: &mut Response) {
     *res.status_mut() = StatusCode::from_u16(context.response.status);
     for (header, values) in context.response.headers.clone() {
@@ -376,7 +424,8 @@ impl WebmachineDispatcher {
             response: WebmachineResponse::default(),
             selected_media_type: None,
             selected_language: None,
-            selected_charset: None
+            selected_charset: None,
+            selected_encoding: None
         }
     }
 
@@ -401,6 +450,7 @@ impl WebmachineDispatcher {
                 let resource = self.routes.get(path).unwrap();
                 update_paths_for_resource(&mut context.request, path);
                 execute_state_machine(context, resource);
+                finalise_response(context, resource);
             },
             None => context.response.status = 404
         };

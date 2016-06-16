@@ -1,6 +1,11 @@
 use super::*;
 use super::sanitise_path;
-use super::{execute_state_machine, update_paths_for_resource, parse_header_values};
+use super::{
+    execute_state_machine,
+    update_paths_for_resource,
+    parse_header_values,
+    finalise_response
+};
 use super::context::*;
 use super::headers::*;
 use expectest::prelude::*;
@@ -327,6 +332,27 @@ fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_
 }
 
 #[test]
+fn execute_state_machine_sets_content_type_header_if_the_request_does_have_an_acceptable_content_type() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept") => vec![HeaderValue::basic(&s!("application/xml"))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        produces: vec![s!("application/xml")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    finalise_response(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(200));
+    expect(context.response.headers).to(be_equal_to(hashmap!{ s!("Content-Type") => vec![h!("application/xml;charset=ISO-8859-1")] }));
+}
+
+#[test]
 fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_language() {
     let mut context = WebmachineContext {
         request: WebmachineRequest {
@@ -378,6 +404,46 @@ fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_
     };
     let resource = WebmachineResource {
         charsets_provided: vec![s!("UTF-8"), s!("US-ASCII")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(406));
+}
+
+#[test]
+fn execute_state_machine_sets_the_charset_if_the_request_does_have_an_acceptable_charset() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Charset") => vec![h!("UTF-8"), h!("iso-8859-1;q=0")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        charsets_provided: vec![s!("UTF-8"), s!("US-ASCII")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    finalise_response(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(200));
+    expect(context.response.headers).to(be_equal_to(hashmap!{ s!("Content-Type") => vec![h!("application/json;charset=UTF-8")] }));
+}
+
+#[test]
+fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_encoding() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Encoding") => vec![h!("compress"), h!("*;q=0")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("identity")],
         .. WebmachineResource::default()
     };
     execute_state_machine(&mut context, &resource);

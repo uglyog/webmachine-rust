@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use headers::*;
 
 /// Request that the state machine is executing against
+#[derive(Debug, Clone, PartialEq)]
 pub struct WebmachineRequest {
     /// Path of the request relative to the resource
     pub request_path: String,
@@ -79,6 +80,16 @@ impl WebmachineRequest {
         self.find_header(&s!("ACCEPT-CHARSET"))
     }
 
+    /// If an Accept-Encoding header exists
+    pub fn has_accept_encoding_header(&self) -> bool {
+        self.has_header(&s!("ACCEPT-ENCODING"))
+    }
+
+    /// Returns the acceptable encodings from the Accept-Encoding header
+    pub fn accept_encoding(&self) -> Vec<HeaderValue> {
+        self.find_header(&s!("ACCEPT-ENCODING"))
+    }
+
     /// If the request has the provided header
     pub fn has_header(&self, header: &String) -> bool {
         self.headers.keys().find(|k| k.to_uppercase() == header.to_uppercase()).is_some()
@@ -95,6 +106,7 @@ impl WebmachineRequest {
 }
 
 /// Response that is generated as a result of the webmachine execution
+#[derive(Debug, Clone, PartialEq)]
 pub struct WebmachineResponse {
     /// status code to return
     pub status: u16,
@@ -109,6 +121,11 @@ impl WebmachineResponse {
             status: 200,
             headers: HashMap::new()
         }
+    }
+
+    /// If the response has the provided header
+    pub fn has_header(&self, header: &String) -> bool {
+        self.headers.keys().find(|k| k.to_uppercase() == header.to_uppercase()).is_some()
     }
 
     /// Adds the header values to the headers
@@ -142,6 +159,7 @@ impl WebmachineResponse {
 }
 
 /// Main context struct that holds the request and response.
+#[derive(Debug, Clone, PartialEq)]
 pub struct WebmachineContext {
     /// Request that the webmachine is executing against
     pub request: WebmachineRequest,
@@ -152,7 +170,9 @@ pub struct WebmachineContext {
     /// selected language after content negotiation
     pub selected_language: Option<String>,
     /// selected charset after content negotiation
-    pub selected_charset: Option<String>
+    pub selected_charset: Option<String>,
+    /// selected encoding after content negotiation
+    pub selected_encoding: Option<String>
 }
 
 impl WebmachineContext {
@@ -163,7 +183,8 @@ impl WebmachineContext {
             response: WebmachineResponse::default(),
             selected_media_type: None,
             selected_language: None,
-            selected_charset: None
+            selected_charset: None,
+            selected_encoding: None
         }
     }
 }

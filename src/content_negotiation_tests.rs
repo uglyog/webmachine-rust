@@ -459,3 +459,202 @@ fn charset_matches_test() {
     expect!(Charset::parse_string(&s!("iso-8859-5")).matches(&Charset::parse_string(&s!("ISO-8859-5")))).to(be_true());
     expect!(Charset::parse_string(&s!("iso-8859-5")).matches(&Charset::parse_string(&s!("*")))).to(be_true());
 }
+
+#[test]
+fn matching_encoding_matches_if_no_accept_header_is_provided() {
+    let resource = WebmachineResource {
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_some().value("identity"));
+}
+
+#[test]
+fn matching_encoding_matches_if_the_resource_does_not_define_any_encoding_and_if_no_accept_header_is_provided() {
+    let resource = WebmachineResource {
+        encodings_provided: Vec::new(),
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_some().value("identity"));
+}
+
+#[test]
+fn matching_encoding_does_not_match_if_the_resource_does_not_define_any_encoding() {
+    let resource = WebmachineResource {
+        encodings_provided: Vec::new(),
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => vec![h!("compress"), h!("*;q=0")]
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_none());
+}
+
+#[test]
+fn matching_encoding_matches_if_the_request_encoding_is_empty_and_the_resource_provides_identity() {
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("compress"), s!("identity")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => Vec::new()
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_some().value("identity"));
+}
+
+#[test]
+fn matching_encoding_does_not_match_if_the_request_encoding_is_empty_and_the_resource_does_not_provide_identity() {
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("compress"), s!("gzip")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => Vec::new()
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_none());
+}
+
+#[test]
+fn matching_encoding_matches_exact_encoding() {
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("gzip")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => vec![h!("gzip")]
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_some().value("gzip"));
+}
+
+#[test]
+fn matching_encoding_wild_card() {
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("compress")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => vec![h!("*")]
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_some().value("compress"));
+}
+
+#[test]
+fn matching_encoding_does_not_match_if_quality_is_zero() {
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("gzip")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => vec![h!("gzip;q=0")]
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_none());
+}
+
+#[test]
+fn matching_encoding_does_not_match_if_star_quality_is_zero() {
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("identity")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => vec![h!("*;q=0")]
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_none());
+}
+
+#[test]
+fn matching_encoding_always_matches_if_identity_is_available() {
+    let resource = WebmachineResource {
+        encodings_provided: vec![s!("identity")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => vec![h!("gzip")]
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource, &request)).to(be_some().value("identity"));
+}
+
+#[test]
+fn matches_most_specific_encoding() {
+    let resource1 = WebmachineResource {
+        .. WebmachineResource::default()
+    };
+    let resource2 = WebmachineResource {
+        encodings_provided: vec![s!("gzip")],
+        .. WebmachineResource::default()
+    };
+    let resource3 = WebmachineResource {
+        encodings_provided: vec![s!("compress"), s!("identity")],
+        .. WebmachineResource::default()
+    };
+    let resource4 = WebmachineResource {
+        encodings_provided: vec![s!("compress"), s!("gzip"), s!("identity")],
+        .. WebmachineResource::default()
+    };
+    let request = WebmachineRequest {
+        headers: hashmap!{
+            s!("Accept-Encoding") => vec![
+                h!("gzip;q=1.0"),
+                h!("*;q=0"),
+                h!("identity; q=0.5")
+            ]
+        },
+        .. WebmachineRequest::default()
+    };
+    expect!(matching_encoding(&resource1, &request)).to(be_some().value("identity"));
+    expect!(matching_encoding(&resource2, &request)).to(be_some().value("gzip"));
+    expect!(matching_encoding(&resource3, &request)).to(be_some().value("identity"));
+    expect!(matching_encoding(&resource4, &request)).to(be_some().value("gzip"));
+}
+
+#[test]
+fn sort_encodings_with_quality_weighting() {
+    expect!(sort_encodings(&vec![h!("gzip")]))
+        .to(be_equal_to(vec![Encoding::parse_string(&s!("gzip")), Encoding::parse_string(&s!("identity"))]));
+    expect!(sort_encodings(&vec![h!("gzip;q=0.8"), h!("compress")]))
+        .to(be_equal_to(vec![Encoding::parse_string(&s!("compress")),
+        Encoding::parse_string(&s!("identity")),
+        Encoding::parse_string(&s!("gzip")).with_weight(&s!("0.8"))]));
+    expect!(sort_encodings(&vec![h!("gzip;q=0.8"), h!("*;q=0.5")]))
+        .to(be_equal_to(vec![Encoding::parse_string(&s!("gzip")).with_weight(&s!("0.8")),
+        Encoding::parse_string(&s!("*")).with_weight(&s!("0.5"))]));
+    expect!(sort_encodings(&vec![h!("gzip; q=0.2"), h!("compress;q=0"), h!("*;q=0")]))
+        .to(be_equal_to(vec![Encoding::parse_string(&s!("gzip")).with_weight(&s!("0.2"))]));
+}
+
+#[test]
+fn encoding_matches_test() {
+    expect!(Encoding::parse_string(&s!("identity")).matches(&Encoding::parse_string(&s!("identity")))).to(be_true());
+    expect!(Encoding::parse_string(&s!("identity")).matches(&Encoding::parse_string(&s!("gzip")))).to(be_false());
+    expect!(Encoding::parse_string(&s!("gzip")).matches(&Encoding::parse_string(&s!("GZip")))).to(be_true());
+    expect!(Encoding::parse_string(&s!("compress")).matches(&Encoding::parse_string(&s!("*")))).to(be_true());
+}
