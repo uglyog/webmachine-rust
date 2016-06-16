@@ -338,7 +338,7 @@ fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_
         .. WebmachineContext::default()
     };
     let resource = WebmachineResource {
-        produces_languages: vec![s!("en")],
+        languages_provided: vec![s!("en")],
         .. WebmachineResource::default()
     };
     execute_state_machine(&mut context, &resource);
@@ -357,10 +357,29 @@ fn execute_state_machine_sets_the_language_header_if_the_request_does_have_an_ac
         .. WebmachineContext::default()
     };
     let resource = WebmachineResource {
-        produces_languages: vec![s!("en")],
+        languages_provided: vec![s!("en")],
         .. WebmachineResource::default()
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(200));
     expect(context.response.headers).to(be_equal_to(hashmap!{ s!("Content-Language") => vec![h!("en")] }));
+}
+
+#[test]
+fn execute_state_machine_returns_406_if_the_request_does_not_have_an_acceptable_charset() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("Accept-Charset") => vec![h!("iso-8859-5"), h!("iso-8859-1;q=0")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        charsets_provided: vec![s!("UTF-8"), s!("US-ASCII")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(406));
 }

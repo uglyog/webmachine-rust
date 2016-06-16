@@ -69,6 +69,16 @@ impl WebmachineRequest {
         self.find_header(&s!("ACCEPT-LANGUAGE"))
     }
 
+    /// If an Accept-Charset header exists
+    pub fn has_accept_charset_header(&self) -> bool {
+        self.has_header(&s!("ACCEPT-CHARSET"))
+    }
+
+    /// Returns the acceptable charsets from the Accept-Charset header
+    pub fn accept_charset(&self) -> Vec<HeaderValue> {
+        self.find_header(&s!("ACCEPT-CHARSET"))
+    }
+
     /// If the request has the provided header
     pub fn has_header(&self, header: &String) -> bool {
         self.headers.keys().find(|k| k.to_uppercase() == header.to_uppercase()).is_some()
@@ -140,7 +150,9 @@ pub struct WebmachineContext {
     /// selected media type after content negotiation
     pub selected_media_type: Option<String>,
     /// selected language after content negotiation
-    pub selected_language: Option<String>
+    pub selected_language: Option<String>,
+    /// selected charset after content negotiation
+    pub selected_charset: Option<String>
 }
 
 impl WebmachineContext {
@@ -150,7 +162,8 @@ impl WebmachineContext {
             request: WebmachineRequest::default(),
             response: WebmachineResponse::default(),
             selected_media_type: None,
-            selected_language: None
+            selected_language: None,
+            selected_charset: None
         }
     }
 }

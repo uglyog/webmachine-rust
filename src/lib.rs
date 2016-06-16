@@ -25,12 +25,11 @@ pub mod context;
 pub mod headers;
 
 /// Simple macro to convert a string to a `HeaderValue` struct.
-#[macro_export]
 macro_rules! h {
     ($e:expr) => (HeaderValue::parse_string($e.to_string()))
 }
 
-pub mod media_types;
+pub mod content_negotiation;
 
 use context::*;
 use headers::*;
@@ -74,11 +73,18 @@ pub struct WebmachineResource {
     /// If the OPTIONS method is supported and is used, this return a HashMap of headers that
     // should appear in the response. Defaults to CORS headers.
     pub options: Box<Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>,
-    /// The list of content types that this resource produces. Defaults to 'application/json'.
+    /// The list of content types that this resource produces. Defaults to 'application/json'. If
+    /// more than one is provided, and the client does not supply an Accept header, the first one
+    /// will be selected.
     pub produces: Vec<String>,
-    /// The list of content languages that this resource produces. Defaults to an empty list,
-    /// which represents all languages
-    pub produces_languages: Vec<String>
+    /// The list of content languages that this resource provides. Defaults to an empty list,
+    /// which represents all languages. If more than one is provided, and the client does not
+    /// supply an Accept-Language header, the first one will be selected.
+    pub languages_provided: Vec<String>,
+    /// The list of charsets that this resource provides. Defaults to an empty list,
+    /// which represents all charsets with ISO-8859-1 as the default. If more than one is provided,
+    /// and the client does not supply an Accept-Charset header, the first one will be selected.
+    pub charsets_provided: Vec<String>
 }
 
 impl WebmachineResource {
@@ -99,7 +105,8 @@ impl WebmachineResource {
             finish_request: Box::new(|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
             options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
             produces: vec![s!("application/json")],
-            produces_languages: Vec::new()
+            languages_provided: Vec::new(),
+            charsets_provided: Vec::new()
         }
     }
 }
@@ -115,6 +122,8 @@ fn extract_path(uri: &RequestUri) -> String {
 fn sanitise_path(path: &String) -> Vec<String> {
     path.split("/").filter(|p| !p.is_empty()).map(|p| p.to_string()).collect()
 }
+
+const MAX_STATE_MACHINE_TRANSISIONS: u8 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Decision {
@@ -136,7 +145,9 @@ enum Decision {
     C4AcceptableMediaTypeAvailable,
     C7NotAcceptable,
     D4AcceptLanguageExists,
-    D5AcceptableLanguageAvailable
+    D5AcceptableLanguageAvailable,
+    E5AcceptCharsetExists,
+    E6AcceptableCharsetAvailable
 }
 
 impl Decision {
@@ -171,8 +182,10 @@ lazy_static! {
         Decision::B3Options => Transition::Branch(Decision::A3Options, Decision::C3AcceptExists),
         Decision::C3AcceptExists => Transition::Branch(Decision::C4AcceptableMediaTypeAvailable, Decision::D4AcceptLanguageExists),
         Decision::C4AcceptableMediaTypeAvailable => Transition::Branch(Decision::D4AcceptLanguageExists, Decision::C7NotAcceptable),
-        Decision::D4AcceptLanguageExists => Transition::Branch(Decision::D5AcceptableLanguageAvailable, Decision::End(200)),
-        Decision::D5AcceptableLanguageAvailable => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
+        Decision::D4AcceptLanguageExists => Transition::Branch(Decision::D5AcceptableLanguageAvailable, Decision::E5AcceptCharsetExists),
+        Decision::D5AcceptableLanguageAvailable => Transition::Branch(Decision::E5AcceptCharsetExists, Decision::C7NotAcceptable),
+        Decision::E5AcceptCharsetExists => Transition::Branch(Decision::E6AcceptableCharsetAvailable, Decision::End(200)),
+        Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::End(200), Decision::C7NotAcceptable),
     };
 }
 
@@ -211,7 +224,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::B4RequestEntityTooLarge => context.request.is_put_or_post() && !resource.valid_entity_length.as_ref()(context),
         &Decision::B3Options => context.request.is_options(),
         &Decision::C3AcceptExists => context.request.has_accept_header(),
-        &Decision::C4AcceptableMediaTypeAvailable => match media_types::matching_content_type(resource, &context.request) {
+        &Decision::C4AcceptableMediaTypeAvailable => match content_negotiation::matching_content_type(resource, &context.request) {
             Some(media_type) => {
                 context.selected_media_type = Some(media_type);
                 true
@@ -219,11 +232,21 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             None => false
         },
         &Decision::D4AcceptLanguageExists => context.request.has_accept_language_header(),
-        &Decision::D5AcceptableLanguageAvailable => match media_types::matching_language(resource, &context.request) {
+        &Decision::D5AcceptableLanguageAvailable => match content_negotiation::matching_language(resource, &context.request) {
             Some(language) => {
                 if language != "*" {
                     context.selected_language = Some(language.clone());
                     context.response.add_header(s!("Content-Language"), vec![HeaderValue::parse_string(language)]);
+                }
+                true
+            },
+            None => false
+        },
+        &Decision::E5AcceptCharsetExists => context.request.has_accept_charset_header(),
+        &Decision::E6AcceptableCharsetAvailable => match content_negotiation::matching_charset(resource, &context.request) {
+            Some(charset) => {
+                if charset != "*" {
+                    context.selected_charset = Some(charset.clone());
                 }
                 true
             },
@@ -236,7 +259,12 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
 fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineResource) {
     let mut state = Decision::Start;
     let mut decisions: Vec<(Decision, bool, Decision)> = Vec::new();
+    let mut loop_count = 0;
     while !state.is_terminal() {
+        loop_count += 1;
+        if loop_count >= MAX_STATE_MACHINE_TRANSISIONS {
+            panic!("State machine has not terminated within {} transitions!", loop_count);
+        }
         debug!("state is {:?}", state);
         state = match TRANSITION_MAP.get(&state) {
             Some(transition) => match transition {
@@ -347,7 +375,8 @@ impl WebmachineDispatcher {
             request: request,
             response: WebmachineResponse::default(),
             selected_media_type: None,
-            selected_language: None
+            selected_language: None,
+            selected_charset: None
         }
     }
 
@@ -384,3 +413,6 @@ extern crate expectest;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod content_negotiation_tests;
