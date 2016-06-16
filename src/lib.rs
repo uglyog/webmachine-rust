@@ -98,6 +98,8 @@ pub struct WebmachineResource {
     /// Does the resource exist? Returning a false value will result in a '404 Not Found' response
     /// unless it is a PUT or POST. Defaults to true.
     pub resource_exists: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// If this resource is known to have existed previously, this should return true. Default is false.
+    pub previously_existed: Box<Fn(&mut WebmachineContext) -> bool>,
 }
 
 impl WebmachineResource {
@@ -124,6 +126,7 @@ impl WebmachineResource {
             encodings_provided: vec![s!("identity")],
             variances: Vec::new(),
             resource_exists: Box::new(|_| true),
+            previously_existed: Box::new(|_| false),
         }
     }
 }
@@ -169,6 +172,10 @@ enum Decision {
     F7AcceptableEncodingAvailable,
     G7ResourceExists,
     H7IfMatchStarExists,
+    I7Put,
+    K7ResourcePreviouslyExisted,
+    L7Post,
+    M8NotFound
 }
 
 impl Decision {
@@ -177,6 +184,7 @@ impl Decision {
             &Decision::End(_) => true,
             &Decision::A3Options => true,
             &Decision::C7NotAcceptable => true,
+            &Decision::M8NotFound => true,
             _ => false
         }
     }
@@ -209,8 +217,11 @@ lazy_static! {
         Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::F6AcceptEncodingExists, Decision::C7NotAcceptable),
         Decision::F6AcceptEncodingExists => Transition::Branch(Decision::F7AcceptableEncodingAvailable, Decision::G7ResourceExists),
         Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::G7ResourceExists, Decision::C7NotAcceptable),
-        Decision::G7ResourceExists => Transition::Branch(Decision::End(200), Decision::H7IfMatchStarExists),
-        Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::End(200)),
+        Decision::G7ResourceExists => Transition::Branch(/* --> */Decision::End(200), Decision::H7IfMatchStarExists),
+        Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::I7Put),
+        Decision::I7Put => Transition::Branch(/* --> */Decision::End(200), Decision::K7ResourcePreviouslyExisted),
+        Decision::K7ResourcePreviouslyExisted => Transition::Branch(/* --> */Decision::End(200), Decision::L7Post),
+        Decision::L7Post => Transition::Branch(/* --> */Decision::End(200), Decision::M8NotFound),
     };
 }
 
@@ -290,6 +301,9 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         },
         &Decision::G7ResourceExists => resource.resource_exists.as_ref()(context),
         &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
+        &Decision::I7Put => context.request.is_put(),
+        &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
+        &Decision::L7Post => context.request.is_post(),
         _ => false
     }
 }
@@ -340,6 +354,7 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
             }
         },
         Decision::C7NotAcceptable => context.response.status = 406,
+        Decision::M8NotFound => context.response.status = 404,
         _ => ()
     }
 }

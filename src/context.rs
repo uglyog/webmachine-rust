@@ -50,6 +50,16 @@ impl WebmachineRequest {
         self.method.to_uppercase() == "OPTIONS"
     }
 
+    /// If the request is a put
+    pub fn is_put(&self) -> bool {
+        self.method.to_uppercase() == "PUT"
+    }
+
+    /// If the request is a post
+    pub fn is_post(&self) -> bool {
+        self.method.to_uppercase() == "POST"
+    }
+
     /// If an Accept header exists
     pub fn has_accept_header(&self) -> bool {
         self.has_header(&s!("ACCEPT"))
