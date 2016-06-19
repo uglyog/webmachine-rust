@@ -588,3 +588,81 @@ fn execute_state_machine_returns_301_and_sets_location_header_if_the_resource_ha
         s!("Location") => vec![h!("http://go.away.com/to/here")]
     }));
 }
+
+#[test]
+fn execute_state_machine_returns_307_and_sets_location_header_if_the_resource_has_moved_temporarily_and_not_a_put() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| false),
+        previously_existed: Box::new(|_| true),
+        moved_temporarily: Box::new(|_| Some(s!("http://go.away.com/to/here"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(307));
+    expect(context.response.headers).to(be_equal_to(btreemap!{
+        s!("Location") => vec![h!("http://go.away.com/to/here")]
+    }));
+}
+
+#[test]
+fn execute_state_machine_returns_410_if_the_resource_has_prev_existed_and_not_a_post() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| false),
+        previously_existed: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(410));
+}
+
+#[test]
+fn execute_state_machine_returns_410_if_the_resource_has_prev_existed_and_a_post_and_posts_to_missing_resource_not_allowed() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("POST")],
+        resource_exists: Box::new(|_| false),
+        previously_existed: Box::new(|_| true),
+        allow_missing_post: Box::new(|_| false),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(410));
+}
+
+#[test]
+fn execute_state_machine_returns_404_if_the_resource_has_not_prev_existed_and_a_post_and_posts_to_missing_resource_not_allowed() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("POST")],
+        resource_exists: Box::new(|_| false),
+        previously_existed: Box::new(|_| false),
+        allow_missing_post: Box::new(|_| false),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(404));
+}

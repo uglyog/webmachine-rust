@@ -103,6 +103,9 @@ pub struct WebmachineResource {
     /// If this resource has moved to a new location permanently, this should return the new
     /// location as a String. Default is to return None
     pub moved_permanently: Box<Fn(&mut WebmachineContext) -> Option<String>>,
+    /// If this resource has moved to a new location temporarily, this should return the new
+    /// location as a String. Default is to return None
+    pub moved_temporarily: Box<Fn(&mut WebmachineContext) -> Option<String>>,
     /// If this returns true, the client will receive a '409 Conflict' response. This is only
     /// called for PUT requests. Default is false.
     pub is_conflict: Box<Fn(&mut WebmachineContext) -> bool>,
@@ -136,6 +139,7 @@ impl WebmachineResource {
             resource_exists: Box::new(|_| true),
             previously_existed: Box::new(|_| false),
             moved_permanently: Box::new(|_| None),
+            moved_temporarily: Box::new(|_| None),
             is_conflict: Box::new(|_| false),
             allow_missing_post: Box::new(|_| false)
         }
@@ -187,8 +191,11 @@ enum Decision {
     I7Put,
     K5HasMovedPermanently,
     K7ResourcePreviouslyExisted,
+    L5HasMovedTemporarily,
     L7Post,
+    M5Post,
     M7PostToMissingResource,
+    N5PostToMissingResource,
     P3Conflict
 }
 
@@ -234,10 +241,13 @@ lazy_static! {
         Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::I7Put),
         Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::P3Conflict),
         Decision::I7Put => Transition::Branch(Decision::I4HasMovedPermanently, Decision::K7ResourcePreviouslyExisted),
-        Decision::K5HasMovedPermanently => Transition::Branch(Decision::End(301), /* --> */Decision::End(200)),
+        Decision::K5HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::L5HasMovedTemporarily),
         Decision::K7ResourcePreviouslyExisted => Transition::Branch(Decision::K5HasMovedPermanently, Decision::L7Post),
+        Decision::L5HasMovedTemporarily => Transition::Branch(Decision::End(307), Decision::M5Post),
         Decision::L7Post => Transition::Branch(Decision::M7PostToMissingResource, Decision::End(404)),
+        Decision::M5Post => Transition::Branch(Decision::N5PostToMissingResource, Decision::End(410)),
         Decision::M7PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(404)),
+        Decision::N5PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(410)),
         Decision::P3Conflict => Transition::Branch(Decision::End(409), /* --> */Decision::End(200)),
     };
 }
@@ -320,7 +330,14 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
         &Decision::I7Put => context.request.is_put(),
         &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
-        &Decision::L7Post => context.request.is_post(),
+        &Decision::L5HasMovedTemporarily => match resource.moved_temporarily.as_ref()(context) {
+            Some(location) => {
+                context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
+                true
+            },
+            None => false
+        },
+        &Decision::L7Post | &Decision::M5Post => context.request.is_post(),
         &Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => match resource.moved_permanently.as_ref()(context) {
             Some(location) => {
                 context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
@@ -329,7 +346,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             None => false
         },
         &Decision::P3Conflict => resource.is_conflict.as_ref()(context),
-        &Decision::M7PostToMissingResource => resource.allow_missing_post.as_ref()(context),
+        &Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource => resource.allow_missing_post.as_ref()(context),
         _ => false
     }
 }
@@ -370,6 +387,7 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
         }
     }
     debug!("Final state is {:?}", state);
+    p!(decisions);
     match state {
         Decision::End(status) => context.response.status = status,
         Decision::A3Options => {
