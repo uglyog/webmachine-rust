@@ -527,3 +527,64 @@ fn execute_state_machine_returns_301_and_sets_location_header_if_the_resource_ha
         s!("Location") => vec![h!("http://go.away.com/to/here")]
     }));
 }
+
+#[test]
+fn execute_state_machine_returns_409_if_the_put_request_is_a_conflict() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("PUT"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("PUT")],
+        resource_exists: Box::new(|_| false),
+        is_conflict: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(409));
+}
+
+#[test]
+fn execute_state_machine_returns_404_if_the_resource_does_not_exist_and_does_not_except_posts_to_nonexistant_resources() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("POST")],
+        resource_exists: Box::new(|_| false),
+        allow_missing_post: Box::new(|_| false),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(404));
+}
+
+#[test]
+fn execute_state_machine_returns_301_and_sets_location_header_if_the_resource_has_moved_permanently_and_prev_existed_and_not_a_put() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("POST")],
+        resource_exists: Box::new(|_| false),
+        previously_existed: Box::new(|_| true),
+        moved_permanently: Box::new(|_| Some(s!("http://go.away.com/to/here"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(301));
+    expect(context.response.headers).to(be_equal_to(btreemap!{
+        s!("Location") => vec![h!("http://go.away.com/to/here")]
+    }));
+}

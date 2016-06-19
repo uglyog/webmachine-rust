@@ -103,6 +103,11 @@ pub struct WebmachineResource {
     /// If this resource has moved to a new location permanently, this should return the new
     /// location as a String. Default is to return None
     pub moved_permanently: Box<Fn(&mut WebmachineContext) -> Option<String>>,
+    /// If this returns true, the client will receive a '409 Conflict' response. This is only
+    /// called for PUT requests. Default is false.
+    pub is_conflict: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// Return true if the resource accepts POST requests to nonexistent resources. Defaults to false.
+    pub allow_missing_post: Box<Fn(&mut WebmachineContext) -> bool>,
 }
 
 impl WebmachineResource {
@@ -130,7 +135,9 @@ impl WebmachineResource {
             variances: Vec::new(),
             resource_exists: Box::new(|_| true),
             previously_existed: Box::new(|_| false),
-            moved_permanently: Box::new(|_| None)
+            moved_permanently: Box::new(|_| None),
+            is_conflict: Box::new(|_| false),
+            allow_missing_post: Box::new(|_| false)
         }
     }
 }
@@ -153,18 +160,18 @@ const MAX_STATE_MACHINE_TRANSISIONS: u8 = 100;
 enum Decision {
     Start,
     End(u16),
-    B13Available,
-    B12KnownMethod,
-    B11UriTooLong,
-    B10MethodAllowed,
-    B9MalformedRequest,
-    B8Authorized,
-    B7Forbidden,
-    B6UnsupportedContentHeader,
-    B5UnkownContentType,
-    B4RequestEntityTooLarge,
-    B3Options,
     A3Options,
+    B3Options,
+    B4RequestEntityTooLarge,
+    B5UnkownContentType,
+    B6UnsupportedContentHeader,
+    B7Forbidden,
+    B8Authorized,
+    B9MalformedRequest,
+    B10MethodAllowed,
+    B11UriTooLong,
+    B12KnownMethod,
+    B13Available,
     C3AcceptExists,
     C4AcceptableMediaTypeAvailable,
     C7NotAcceptable,
@@ -178,9 +185,11 @@ enum Decision {
     H7IfMatchStarExists,
     I4HasMovedPermanently,
     I7Put,
+    K5HasMovedPermanently,
     K7ResourcePreviouslyExisted,
     L7Post,
-    M8NotFound
+    M7PostToMissingResource,
+    P3Conflict
 }
 
 impl Decision {
@@ -189,7 +198,6 @@ impl Decision {
             &Decision::End(_) => true,
             &Decision::A3Options => true,
             &Decision::C7NotAcceptable => true,
-            &Decision::M8NotFound => true,
             _ => false
         }
     }
@@ -203,17 +211,17 @@ enum Transition {
 lazy_static! {
     static ref TRANSITION_MAP: HashMap<Decision, Transition> = hashmap!{
         Decision::Start => Transition::To(Decision::B13Available),
-        Decision::B13Available => Transition::Branch(Decision::B12KnownMethod, Decision::End(503)),
-        Decision::B12KnownMethod => Transition::Branch(Decision::B11UriTooLong, Decision::End(501)),
-        Decision::B11UriTooLong => Transition::Branch(Decision::End(414), Decision::B10MethodAllowed),
-        Decision::B10MethodAllowed => Transition::Branch(Decision::B9MalformedRequest, Decision::End(405)),
-        Decision::B9MalformedRequest => Transition::Branch(Decision::End(400), Decision::B8Authorized),
-        Decision::B8Authorized => Transition::Branch(Decision::B7Forbidden, Decision::End(401)),
-        Decision::B7Forbidden => Transition::Branch(Decision::End(403), Decision::B6UnsupportedContentHeader),
-        Decision::B6UnsupportedContentHeader => Transition::Branch(Decision::End(501), Decision::B5UnkownContentType),
-        Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::B4RequestEntityTooLarge),
-        Decision::B4RequestEntityTooLarge => Transition::Branch(Decision::End(413), Decision::B3Options),
         Decision::B3Options => Transition::Branch(Decision::A3Options, Decision::C3AcceptExists),
+        Decision::B4RequestEntityTooLarge => Transition::Branch(Decision::End(413), Decision::B3Options),
+        Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::B4RequestEntityTooLarge),
+        Decision::B6UnsupportedContentHeader => Transition::Branch(Decision::End(501), Decision::B5UnkownContentType),
+        Decision::B7Forbidden => Transition::Branch(Decision::End(403), Decision::B6UnsupportedContentHeader),
+        Decision::B8Authorized => Transition::Branch(Decision::B7Forbidden, Decision::End(401)),
+        Decision::B9MalformedRequest => Transition::Branch(Decision::End(400), Decision::B8Authorized),
+        Decision::B10MethodAllowed => Transition::Branch(Decision::B9MalformedRequest, Decision::End(405)),
+        Decision::B11UriTooLong => Transition::Branch(Decision::End(414), Decision::B10MethodAllowed),
+        Decision::B12KnownMethod => Transition::Branch(Decision::B11UriTooLong, Decision::End(501)),
+        Decision::B13Available => Transition::Branch(Decision::B12KnownMethod, Decision::End(503)),
         Decision::C3AcceptExists => Transition::Branch(Decision::C4AcceptableMediaTypeAvailable, Decision::D4AcceptLanguageExists),
         Decision::C4AcceptableMediaTypeAvailable => Transition::Branch(Decision::D4AcceptLanguageExists, Decision::C7NotAcceptable),
         Decision::D4AcceptLanguageExists => Transition::Branch(Decision::D5AcceptableLanguageAvailable, Decision::E5AcceptCharsetExists),
@@ -224,10 +232,13 @@ lazy_static! {
         Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::G7ResourceExists, Decision::C7NotAcceptable),
         Decision::G7ResourceExists => Transition::Branch(/* --> */Decision::End(200), Decision::H7IfMatchStarExists),
         Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::I7Put),
-        Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), /* --> */Decision::End(200)),
+        Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::P3Conflict),
         Decision::I7Put => Transition::Branch(Decision::I4HasMovedPermanently, Decision::K7ResourcePreviouslyExisted),
-        Decision::K7ResourcePreviouslyExisted => Transition::Branch(/* --> */Decision::End(200), Decision::L7Post),
-        Decision::L7Post => Transition::Branch(/* --> */Decision::End(200), Decision::M8NotFound),
+        Decision::K5HasMovedPermanently => Transition::Branch(Decision::End(301), /* --> */Decision::End(200)),
+        Decision::K7ResourcePreviouslyExisted => Transition::Branch(Decision::K5HasMovedPermanently, Decision::L7Post),
+        Decision::L7Post => Transition::Branch(Decision::M7PostToMissingResource, Decision::End(404)),
+        Decision::M7PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(404)),
+        Decision::P3Conflict => Transition::Branch(Decision::End(409), /* --> */Decision::End(200)),
     };
 }
 
@@ -310,13 +321,15 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::I7Put => context.request.is_put(),
         &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
         &Decision::L7Post => context.request.is_post(),
-        &Decision::I4HasMovedPermanently => match resource.moved_permanently.as_ref()(context) {
+        &Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => match resource.moved_permanently.as_ref()(context) {
             Some(location) => {
                 context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
                 true
             },
             None => false
         },
+        &Decision::P3Conflict => resource.is_conflict.as_ref()(context),
+        &Decision::M7PostToMissingResource => resource.allow_missing_post.as_ref()(context),
         _ => false
     }
 }
@@ -367,7 +380,6 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
             }
         },
         Decision::C7NotAcceptable => context.response.status = 406,
-        Decision::M8NotFound => context.response.status = 404,
         _ => ()
     }
 }
