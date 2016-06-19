@@ -505,3 +505,25 @@ fn execute_state_machine_returns_412_if_the_resource_does_not_exist_and_there_is
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(412));
 }
+
+#[test]
+fn execute_state_machine_returns_301_and_sets_location_header_if_the_resource_has_moved_permanently() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("PUT"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("PUT")],
+        resource_exists: Box::new(|_| false),
+        moved_permanently: Box::new(|_| Some(s!("http://go.away.com/to/here"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(301));
+    expect(context.response.headers).to(be_equal_to(btreemap!{
+        s!("Location") => vec![h!("http://go.away.com/to/here")]
+    }));
+}

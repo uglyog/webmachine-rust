@@ -100,6 +100,9 @@ pub struct WebmachineResource {
     pub resource_exists: Box<Fn(&mut WebmachineContext) -> bool>,
     /// If this resource is known to have existed previously, this should return true. Default is false.
     pub previously_existed: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// If this resource has moved to a new location permanently, this should return the new
+    /// location as a String. Default is to return None
+    pub moved_permanently: Box<Fn(&mut WebmachineContext) -> Option<String>>,
 }
 
 impl WebmachineResource {
@@ -127,6 +130,7 @@ impl WebmachineResource {
             variances: Vec::new(),
             resource_exists: Box::new(|_| true),
             previously_existed: Box::new(|_| false),
+            moved_permanently: Box::new(|_| None)
         }
     }
 }
@@ -172,6 +176,7 @@ enum Decision {
     F7AcceptableEncodingAvailable,
     G7ResourceExists,
     H7IfMatchStarExists,
+    I4HasMovedPermanently,
     I7Put,
     K7ResourcePreviouslyExisted,
     L7Post,
@@ -219,7 +224,8 @@ lazy_static! {
         Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::G7ResourceExists, Decision::C7NotAcceptable),
         Decision::G7ResourceExists => Transition::Branch(/* --> */Decision::End(200), Decision::H7IfMatchStarExists),
         Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::I7Put),
-        Decision::I7Put => Transition::Branch(/* --> */Decision::End(200), Decision::K7ResourcePreviouslyExisted),
+        Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), /* --> */Decision::End(200)),
+        Decision::I7Put => Transition::Branch(Decision::I4HasMovedPermanently, Decision::K7ResourcePreviouslyExisted),
         Decision::K7ResourcePreviouslyExisted => Transition::Branch(/* --> */Decision::End(200), Decision::L7Post),
         Decision::L7Post => Transition::Branch(/* --> */Decision::End(200), Decision::M8NotFound),
     };
@@ -304,6 +310,13 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::I7Put => context.request.is_put(),
         &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
         &Decision::L7Post => context.request.is_post(),
+        &Decision::I4HasMovedPermanently => match resource.moved_permanently.as_ref()(context) {
+            Some(location) => {
+                context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
+                true
+            },
+            None => false
+        },
         _ => false
     }
 }
