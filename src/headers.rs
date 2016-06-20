@@ -163,6 +163,16 @@ impl HeaderValue {
                 .join("; "))
         }
     }
+
+    /// Parses a weak ETag value. Weak etags are in the form W/<quoted-string>. Returns the
+    /// contents of the qouted string if it matches, otherwise returns None.
+    pub fn weak_etag(&self) -> Option<String> {
+        if self.value.starts_with("W/") {
+            Some(parse_header(s!(self.value[2..]))[0].clone())
+        } else {
+            None
+        }
+    }
 }
 
 impl PartialEq<HeaderValue> for HeaderValue {
@@ -248,5 +258,25 @@ mod tests {
             value: s!("quoted; value"),
             params: hashmap!{}
         }));
+    }
+
+    #[test]
+    fn parse_etag_header_value_test() {
+        let etag = s!("\"1234567890\"");
+        let weak_etag = s!("W/\"1234567890\"");
+
+        let header = HeaderValue::parse_string(etag);
+        expect!(header.clone()).to(be_equal_to(HeaderValue {
+            value: s!("1234567890"),
+            params: hashmap!{}
+        }));
+        expect!(header.weak_etag()).to(be_none());
+
+        let weak_etag_value = HeaderValue::parse_string(weak_etag.clone());
+        expect!(weak_etag_value.clone()).to(be_equal_to(HeaderValue {
+            value: weak_etag.clone(),
+            params: hashmap!{}
+        }));
+        expect!(weak_etag_value.weak_etag()).to(be_some().value("1234567890"));
     }
 }

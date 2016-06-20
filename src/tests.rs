@@ -666,3 +666,43 @@ fn execute_state_machine_returns_404_if_the_resource_has_not_prev_existed_and_a_
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(404));
 }
+
+#[test]
+fn execute_state_machine_returns_412_if_the_resource_etag_does_not_match_if_match_header() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("If-Match") => vec![h!("\"1234567891\"")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        generate_etag: Box::new(|_| Some(s!("1234567890"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(412));
+}
+
+#[test]
+fn execute_state_machine_returns_412_if_the_resource_etag_does_not_match_if_match_header_weak_etag() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("If-Match") => vec![h!("W/\"1234567891\"")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        generate_etag: Box::new(|_| Some(s!("1234567890"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(412));
+}

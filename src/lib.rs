@@ -111,6 +111,9 @@ pub struct WebmachineResource {
     pub is_conflict: Box<Fn(&mut WebmachineContext) -> bool>,
     /// Return true if the resource accepts POST requests to nonexistent resources. Defaults to false.
     pub allow_missing_post: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// If this returns a value, it will be used as the value of the ETag header and for
+    /// comparison in conditional requests. Default is None.
+    pub generate_etag: Box<Fn(&mut WebmachineContext) -> Option<String>>,
 }
 
 impl WebmachineResource {
@@ -141,7 +144,8 @@ impl WebmachineResource {
             moved_permanently: Box::new(|_| None),
             moved_temporarily: Box::new(|_| None),
             is_conflict: Box::new(|_| false),
-            allow_missing_post: Box::new(|_| false)
+            allow_missing_post: Box::new(|_| false),
+            generate_etag: Box::new(|_| None)
         }
     }
 }
@@ -186,6 +190,9 @@ enum Decision {
     F6AcceptEncodingExists,
     F7AcceptableEncodingAvailable,
     G7ResourceExists,
+    G8IfMatchExists,
+    G9IfMatchStarExists,
+    G11EtagInIfMatch,
     H7IfMatchStarExists,
     I4HasMovedPermanently,
     I7Put,
@@ -237,7 +244,10 @@ lazy_static! {
         Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::F6AcceptEncodingExists, Decision::C7NotAcceptable),
         Decision::F6AcceptEncodingExists => Transition::Branch(Decision::F7AcceptableEncodingAvailable, Decision::G7ResourceExists),
         Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::G7ResourceExists, Decision::C7NotAcceptable),
-        Decision::G7ResourceExists => Transition::Branch(/* --> */Decision::End(200), Decision::H7IfMatchStarExists),
+        Decision::G7ResourceExists => Transition::Branch(Decision::G8IfMatchExists, Decision::H7IfMatchStarExists),
+        Decision::G8IfMatchExists => Transition::Branch(Decision::G9IfMatchStarExists, /* --> */Decision::End(200)),
+        Decision::G9IfMatchStarExists => Transition::Branch(/* --> */Decision::End(200), Decision::G11EtagInIfMatch),
+        Decision::G11EtagInIfMatch => Transition::Branch(/* --> */Decision::End(200), Decision::End(412)),
         Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::I7Put),
         Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::P3Conflict),
         Decision::I7Put => Transition::Branch(Decision::I4HasMovedPermanently, Decision::K7ResourcePreviouslyExisted),
@@ -254,10 +264,6 @@ lazy_static! {
 
 fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resource: &WebmachineResource) -> bool {
     match decision {
-        &Decision::B13Available => resource.available.as_ref()(context),
-        &Decision::B12KnownMethod => resource.known_methods
-            .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some(),
-        &Decision::B11UriTooLong => resource.uri_too_long.as_ref()(context),
         &Decision::B10MethodAllowed => {
             match resource.allowed_methods
                 .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()) {
@@ -271,6 +277,10 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 }
             }
         },
+        &Decision::B11UriTooLong => resource.uri_too_long.as_ref()(context),
+        &Decision::B12KnownMethod => resource.known_methods
+            .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some(),
+        &Decision::B13Available => resource.available.as_ref()(context),
         &Decision::B9MalformedRequest => resource.malformed_request.as_ref()(context),
         &Decision::B8Authorized => match resource.not_authorized.as_ref()(context) {
             Some(realm) => {
@@ -327,7 +337,23 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             None => false
         },
         &Decision::G7ResourceExists => resource.resource_exists.as_ref()(context),
-        &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
+        &Decision::G8IfMatchExists => context.request.has_header(&s!("If-Match")),
+        &Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
+        &Decision::G11EtagInIfMatch => {
+            let header_values = context.request.find_header(&s!("If-Match"));
+            match resource.generate_etag.as_ref()(context) {
+                Some(etag) => {
+                    header_values.iter().find(|val| {
+                        if val.value.starts_with("W/") {
+                            val.weak_etag().unwrap() == etag
+                        } else {
+                            val.value == etag
+                        }
+                    }).is_some()
+                },
+                None => false
+            }
+        },
         &Decision::I7Put => context.request.is_put(),
         &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
         &Decision::L5HasMovedTemporarily => match resource.moved_temporarily.as_ref()(context) {
@@ -345,8 +371,8 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             },
             None => false
         },
-        &Decision::P3Conflict => resource.is_conflict.as_ref()(context),
         &Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource => resource.allow_missing_post.as_ref()(context),
+        &Decision::P3Conflict => resource.is_conflict.as_ref()(context),
         _ => false
     }
 }
