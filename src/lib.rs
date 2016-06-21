@@ -213,6 +213,10 @@ enum Decision {
     K13ETagInIfNoneMatch,
     L5HasMovedTemporarily,
     L7Post,
+    L13IfModifiedSinceExists,
+    L14IfModifiedSinceValid,
+    L15IfModifiedSinceGreaterThanNow,
+    L17IfLastModifiedGreaterThanMS,
     M5Post,
     M7PostToMissingResource,
     N5PostToMissingResource,
@@ -266,14 +270,18 @@ lazy_static! {
         Decision::H12LastModifiedGreaterThanUMS => Transition::Branch(Decision::End(412), Decision::I12IfNoneMatchExists),
         Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::P3Conflict),
         Decision::I7Put => Transition::Branch(Decision::I4HasMovedPermanently, Decision::K7ResourcePreviouslyExisted),
-        Decision::I12IfNoneMatchExists => Transition::Branch(Decision::I13IfNoneMatchStarExists, /* --> */Decision::End(200)),
+        Decision::I12IfNoneMatchExists => Transition::Branch(Decision::I13IfNoneMatchStarExists, Decision::L13IfModifiedSinceExists),
         Decision::I13IfNoneMatchStarExists => Transition::Branch(Decision::J18GetHead, Decision::K13ETagInIfNoneMatch),
         Decision::J18GetHead => Transition::Branch(Decision::End(304), Decision::End(412)),
-        Decision::K13ETagInIfNoneMatch => Transition::Branch(Decision::J18GetHead, /* --> */Decision::End(200)),
+        Decision::K13ETagInIfNoneMatch => Transition::Branch(Decision::J18GetHead, Decision::L13IfModifiedSinceExists),
         Decision::K5HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::L5HasMovedTemporarily),
         Decision::K7ResourcePreviouslyExisted => Transition::Branch(Decision::K5HasMovedPermanently, Decision::L7Post),
         Decision::L5HasMovedTemporarily => Transition::Branch(Decision::End(307), Decision::M5Post),
         Decision::L7Post => Transition::Branch(Decision::M7PostToMissingResource, Decision::End(404)),
+        Decision::L13IfModifiedSinceExists => Transition::Branch(Decision::L14IfModifiedSinceValid, /* --> */Decision::End(200)),
+        Decision::L14IfModifiedSinceValid => Transition::Branch(Decision::L15IfModifiedSinceGreaterThanNow, /* --> */Decision::End(200)),
+        Decision::L15IfModifiedSinceGreaterThanNow => Transition::Branch(/* --> */Decision::End(200), Decision::L17IfLastModifiedGreaterThanMS),
+        Decision::L17IfLastModifiedGreaterThanMS => Transition::Branch(/* --> */Decision::End(200), Decision::End(304)),
         Decision::M5Post => Transition::Branch(Decision::N5PostToMissingResource, Decision::End(410)),
         Decision::M7PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(404)),
         Decision::N5PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(410)),
@@ -282,7 +290,8 @@ lazy_static! {
 }
 
 fn resource_etag_matches_header_values(resource: &WebmachineResource, context: &mut WebmachineContext,
-    header_values: &Vec<HeaderValue>) -> bool {
+    header: &str) -> bool {
+    let header_values = context.request.find_header(&s!(header));
     match resource.generate_etag.as_ref()(context) {
         Some(etag) => {
             header_values.iter().find(|val| {
@@ -294,6 +303,22 @@ fn resource_etag_matches_header_values(resource: &WebmachineResource, context: &
             }).is_some()
         },
         None => false
+    }
+}
+
+fn validate_header_date(request: &WebmachineRequest, header: &str,
+    context_meta: &mut Option<DateTime<FixedOffset>>) -> bool {
+    let header_values = request.find_header(&s!(header));
+    let date_value = header_values.first().unwrap().clone().value;
+    match DateTime::parse_from_rfc2822(&date_value) {
+        Ok(datetime) => {
+            *context_meta = Some(datetime.clone());
+            true
+        },
+        Err(err) => {
+            debug!("Failed to parse '{}' header value '{}' - {}", header, date_value, err);
+            false
+        }
     }
 }
 
@@ -374,26 +399,9 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::G7ResourceExists => resource.resource_exists.as_ref()(context),
         &Decision::G8IfMatchExists => context.request.has_header(&s!("If-Match")),
         &Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
-        &Decision::G11EtagInIfMatch => {
-            let header_values = context.request.find_header(&s!("If-Match"));
-            resource_etag_matches_header_values(resource, context, &header_values)
-        },
+        &Decision::G11EtagInIfMatch => resource_etag_matches_header_values(resource, context, "If-Match"),
         &Decision::H10IfUnmodifiedSinceExists => context.request.has_header(&s!("If-Unmodified-Since")),
-        &Decision::H11IfUnmodifiedSinceValid => {
-            let header_values = context.request.find_header(&s!("If-Unmodified-Since"));
-            let date_value = header_values.first().unwrap().clone().value;
-            match DateTime::parse_from_rfc2822(&date_value) {
-                Ok(datetime) => {
-                    context.if_unmodified_since = Some(datetime.clone());
-                    true
-                },
-                Err(err) => {
-                    p!(err);
-                    debug!("Failed to parse If-Unmodified-Since header value '{}' - {}", date_value, err);
-                    false
-                }
-            }
-        },
+        &Decision::H11IfUnmodifiedSinceValid => validate_header_date(&context.request, "If-Unmodified-Since", &mut context.if_unmodified_since),
         &Decision::H12LastModifiedGreaterThanUMS => {
             match resource.last_modified.as_ref()(context) {
                 Some(datetime) => datetime > context.if_unmodified_since.unwrap(),
@@ -405,10 +413,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::I13IfNoneMatchStarExists => context.request.has_header_value(&s!("If-None-Match"), &s!("*")),
         &Decision::J18GetHead => context.request.is_get_or_head(),
         &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
-        &Decision::K13ETagInIfNoneMatch => {
-            let header_values = context.request.find_header(&s!("If-None-Match"));
-            resource_etag_matches_header_values(resource, context, &header_values)
-        },
+        &Decision::K13ETagInIfNoneMatch => resource_etag_matches_header_values(resource, context, "If-None-Match"),
         &Decision::L5HasMovedTemporarily => match resource.moved_temporarily.as_ref()(context) {
             Some(location) => {
                 context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
@@ -417,6 +422,19 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             None => false
         },
         &Decision::L7Post | &Decision::M5Post => context.request.is_post(),
+        &Decision::L13IfModifiedSinceExists => context.request.has_header(&s!("If-Modified-Since")),
+        &Decision::L14IfModifiedSinceValid => validate_header_date(&context.request, "If-Modified-Since", &mut context.if_modified_since),
+        &Decision::L15IfModifiedSinceGreaterThanNow => {
+            let datetime = context.if_modified_since.unwrap();
+            let timezone = datetime.timezone();
+            datetime > UTC::now().with_timezone(&timezone)
+        },
+        &Decision::L17IfLastModifiedGreaterThanMS => {
+            match resource.last_modified.as_ref()(context) {
+                Some(datetime) => datetime > context.if_modified_since.unwrap(),
+                None => false
+            }
+        },
         &Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => match resource.moved_permanently.as_ref()(context) {
             Some(location) => {
                 context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
@@ -581,11 +599,7 @@ impl WebmachineDispatcher {
         WebmachineContext {
             request: request,
             response: WebmachineResponse::default(),
-            selected_media_type: None,
-            selected_language: None,
-            selected_charset: None,
-            selected_encoding: None,
-            if_unmodified_since: None
+            .. WebmachineContext::default()
         }
     }
 

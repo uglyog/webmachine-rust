@@ -201,7 +201,9 @@ pub struct WebmachineContext {
     /// selected encoding after content negotiation
     pub selected_encoding: Option<String>,
     /// parsed date and time from the If-Unmodified-Since header
-    pub if_unmodified_since: Option<DateTime<FixedOffset>>
+    pub if_unmodified_since: Option<DateTime<FixedOffset>>,
+    /// parsed date and time from the If-Modified-Since header
+    pub if_modified_since: Option<DateTime<FixedOffset>>
 }
 
 impl WebmachineContext {
@@ -214,7 +216,8 @@ impl WebmachineContext {
             selected_language: None,
             selected_charset: None,
             selected_encoding: None,
-            if_unmodified_since: None
+            if_unmodified_since: None,
+            if_modified_since: None
         }
     }
 }

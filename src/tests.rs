@@ -813,3 +813,25 @@ fn execute_state_machine_returns_304_if_resource_etag_in_if_non_match_and_is_a_h
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(304));
 }
+
+#[test]
+fn execute_state_machine_returns_304_if_the_resource_last_modified_gt_modified_since() {
+    let datetime = Local::now().with_timezone(&FixedOffset::east(10 * 3600)) - Duration::minutes(15);
+    let header_datetime = datetime + Duration::minutes(5);
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("If-Modified-Since") => vec![h!(format!("\"{}\"", header_datetime.to_rfc2822()))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        last_modified: Box::new(move |_| Some(datetime)),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(304));
+}
