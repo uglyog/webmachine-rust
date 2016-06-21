@@ -8,12 +8,14 @@ extern crate hyper;
 #[macro_use] extern crate maplit;
 #[macro_use] extern crate itertools;
 #[macro_use] extern crate lazy_static;
+extern crate chrono;
 
 use std::collections::{BTreeMap, HashMap};
 use hyper::server::{Request, Response};
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
 use itertools::Itertools;
+use chrono::*;
 
 /// Simple macro to convert a string slice to a `String` struct.
 macro_rules! s {
@@ -114,6 +116,10 @@ pub struct WebmachineResource {
     /// If this returns a value, it will be used as the value of the ETag header and for
     /// comparison in conditional requests. Default is None.
     pub generate_etag: Box<Fn(&mut WebmachineContext) -> Option<String>>,
+    /// Returns the last modified date and time of the resource which will be added as the
+    /// Last-Modified header in the response and used in negotiating conditional requests.
+    /// Default is None
+    pub last_modified: Box<Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>,
 }
 
 impl WebmachineResource {
@@ -145,7 +151,8 @@ impl WebmachineResource {
             moved_temporarily: Box::new(|_| None),
             is_conflict: Box::new(|_| false),
             allow_missing_post: Box::new(|_| false),
-            generate_etag: Box::new(|_| None)
+            generate_etag: Box::new(|_| None),
+            last_modified: Box::new(|_| None)
         }
     }
 }
@@ -182,7 +189,6 @@ enum Decision {
     B13Available,
     C3AcceptExists,
     C4AcceptableMediaTypeAvailable,
-    C7NotAcceptable,
     D4AcceptLanguageExists,
     D5AcceptableLanguageAvailable,
     E5AcceptCharsetExists,
@@ -194,6 +200,9 @@ enum Decision {
     G9IfMatchStarExists,
     G11EtagInIfMatch,
     H7IfMatchStarExists,
+    H10IfUnmodifiedSinceExists,
+    H11IfUnmodifiedSinceValid,
+    H12LastModifiedGreaterThanUMS,
     I4HasMovedPermanently,
     I7Put,
     K5HasMovedPermanently,
@@ -211,7 +220,6 @@ impl Decision {
         match self {
             &Decision::End(_) => true,
             &Decision::A3Options => true,
-            &Decision::C7NotAcceptable => true,
             _ => false
         }
     }
@@ -237,18 +245,21 @@ lazy_static! {
         Decision::B12KnownMethod => Transition::Branch(Decision::B11UriTooLong, Decision::End(501)),
         Decision::B13Available => Transition::Branch(Decision::B12KnownMethod, Decision::End(503)),
         Decision::C3AcceptExists => Transition::Branch(Decision::C4AcceptableMediaTypeAvailable, Decision::D4AcceptLanguageExists),
-        Decision::C4AcceptableMediaTypeAvailable => Transition::Branch(Decision::D4AcceptLanguageExists, Decision::C7NotAcceptable),
+        Decision::C4AcceptableMediaTypeAvailable => Transition::Branch(Decision::D4AcceptLanguageExists, Decision::End(406)),
         Decision::D4AcceptLanguageExists => Transition::Branch(Decision::D5AcceptableLanguageAvailable, Decision::E5AcceptCharsetExists),
-        Decision::D5AcceptableLanguageAvailable => Transition::Branch(Decision::E5AcceptCharsetExists, Decision::C7NotAcceptable),
+        Decision::D5AcceptableLanguageAvailable => Transition::Branch(Decision::E5AcceptCharsetExists, Decision::End(406)),
         Decision::E5AcceptCharsetExists => Transition::Branch(Decision::E6AcceptableCharsetAvailable, Decision::F6AcceptEncodingExists),
-        Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::F6AcceptEncodingExists, Decision::C7NotAcceptable),
+        Decision::E6AcceptableCharsetAvailable => Transition::Branch(Decision::F6AcceptEncodingExists, Decision::End(406)),
         Decision::F6AcceptEncodingExists => Transition::Branch(Decision::F7AcceptableEncodingAvailable, Decision::G7ResourceExists),
-        Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::G7ResourceExists, Decision::C7NotAcceptable),
+        Decision::F7AcceptableEncodingAvailable => Transition::Branch(Decision::G7ResourceExists, Decision::End(406)),
         Decision::G7ResourceExists => Transition::Branch(Decision::G8IfMatchExists, Decision::H7IfMatchStarExists),
-        Decision::G8IfMatchExists => Transition::Branch(Decision::G9IfMatchStarExists, /* --> */Decision::End(200)),
-        Decision::G9IfMatchStarExists => Transition::Branch(/* --> */Decision::End(200), Decision::G11EtagInIfMatch),
-        Decision::G11EtagInIfMatch => Transition::Branch(/* --> */Decision::End(200), Decision::End(412)),
+        Decision::G8IfMatchExists => Transition::Branch(Decision::G9IfMatchStarExists, Decision::H10IfUnmodifiedSinceExists),
+        Decision::G9IfMatchStarExists => Transition::Branch(Decision::H10IfUnmodifiedSinceExists, Decision::G11EtagInIfMatch),
+        Decision::G11EtagInIfMatch => Transition::Branch(Decision::H10IfUnmodifiedSinceExists, Decision::End(412)),
         Decision::H7IfMatchStarExists => Transition::Branch(Decision::End(412), Decision::I7Put),
+        Decision::H10IfUnmodifiedSinceExists => Transition::Branch(Decision::H11IfUnmodifiedSinceValid, /* --> */Decision::End(200)),
+        Decision::H11IfUnmodifiedSinceValid => Transition::Branch(Decision::H12LastModifiedGreaterThanUMS, /* --> */Decision::End(200)),
+        Decision::H12LastModifiedGreaterThanUMS => Transition::Branch(Decision::End(412), /* --> */Decision::End(200)),
         Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::P3Conflict),
         Decision::I7Put => Transition::Branch(Decision::I4HasMovedPermanently, Decision::K7ResourcePreviouslyExisted),
         Decision::K5HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::L5HasMovedTemporarily),
@@ -354,6 +365,28 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 None => false
             }
         },
+        &Decision::H10IfUnmodifiedSinceExists => context.request.has_header(&s!("If-Unmodified-Since")),
+        &Decision::H11IfUnmodifiedSinceValid => {
+            let header_values = context.request.find_header(&s!("If-Unmodified-Since"));
+            let date_value = header_values.first().unwrap().clone().value;
+            match DateTime::parse_from_rfc2822(&date_value) {
+                Ok(datetime) => {
+                    context.if_unmodified_since = Some(datetime.clone());
+                    true
+                },
+                Err(err) => {
+                    p!(err);
+                    debug!("Failed to parse If-Unmodified-Since header value '{}' - {}", date_value, err);
+                    false
+                }
+            }
+        },
+        &Decision::H12LastModifiedGreaterThanUMS => {
+            match resource.last_modified.as_ref()(context) {
+                Some(datetime) => datetime > context.if_unmodified_since.unwrap(),
+                None => false
+            }
+        },
         &Decision::I7Put => context.request.is_put(),
         &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
         &Decision::L5HasMovedTemporarily => match resource.moved_temporarily.as_ref()(context) {
@@ -423,7 +456,6 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
                 None => ()
             }
         },
-        Decision::C7NotAcceptable => context.response.status = 406,
         _ => ()
     }
 }
@@ -532,7 +564,8 @@ impl WebmachineDispatcher {
             selected_media_type: None,
             selected_language: None,
             selected_charset: None,
-            selected_encoding: None
+            selected_encoding: None,
+            if_unmodified_since: None
         }
     }
 

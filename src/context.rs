@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, BTreeMap};
 use headers::*;
+use chrono::*;
 
 /// Request that the state machine is executing against
 #[derive(Debug, Clone, PartialEq)]
@@ -193,7 +194,9 @@ pub struct WebmachineContext {
     /// selected charset after content negotiation
     pub selected_charset: Option<String>,
     /// selected encoding after content negotiation
-    pub selected_encoding: Option<String>
+    pub selected_encoding: Option<String>,
+    /// parsed date and time from the If-Unmodified-Since header
+    pub if_unmodified_since: Option<DateTime<FixedOffset>>
 }
 
 impl WebmachineContext {
@@ -205,7 +208,8 @@ impl WebmachineContext {
             selected_media_type: None,
             selected_language: None,
             selected_charset: None,
-            selected_encoding: None
+            selected_encoding: None,
+            if_unmodified_since: None
         }
     }
 }

@@ -10,6 +10,7 @@ use super::context::*;
 use super::headers::*;
 use expectest::prelude::*;
 use std::collections::HashMap;
+use chrono::*;
 
 fn resource(path: &str) -> WebmachineRequest {
     WebmachineRequest {
@@ -701,6 +702,28 @@ fn execute_state_machine_returns_412_if_the_resource_etag_does_not_match_if_matc
     let resource = WebmachineResource {
         resource_exists: Box::new(|_| true),
         generate_etag: Box::new(|_| Some(s!("1234567890"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(412));
+}
+
+#[test]
+fn execute_state_machine_returns_412_if_the_resource_last_modified_gt_unmodified_since() {
+    let datetime = Local::now().with_timezone(&FixedOffset::east(10 * 3600));
+    let header_datetime = datetime - Duration::minutes(5);
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("If-Unmodified-Since") => vec![h!(format!("\"{}\"", header_datetime.to_rfc2822()))]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        last_modified: Box::new(move |_| Some(datetime)),
         .. WebmachineResource::default()
     };
     execute_state_machine(&mut context, &resource);
