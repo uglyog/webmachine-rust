@@ -46,6 +46,11 @@ impl WebmachineRequest {
         ["PUT", "POST"].contains(&self.method.to_uppercase().as_str())
     }
 
+    /// If the request is a get or head request
+    pub fn is_get_or_head(&self) -> bool {
+        ["GET", "HEAD"].contains(&self.method.to_uppercase().as_str())
+    }
+
     /// If the request is an options
     pub fn is_options(&self) -> bool {
         self.method.to_uppercase() == "OPTIONS"

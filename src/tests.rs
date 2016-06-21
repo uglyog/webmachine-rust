@@ -729,3 +729,45 @@ fn execute_state_machine_returns_412_if_the_resource_last_modified_gt_unmodified
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(412));
 }
+
+#[test]
+fn execute_state_machine_returns_304_if_non_match_star_exists_and_is_not_a_head_or_get() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            headers: hashmap!{
+                s!("If-None-Match") => vec![h!("*")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(412));
+}
+
+#[test]
+fn execute_state_machine_returns_304_if_non_match_star_exists_and_is_a_head_or_get() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("HEAD"),
+            headers: hashmap!{
+                s!("If-None-Match") => vec![h!("*")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        allowed_methods: vec![s!("HEAD")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(304));
+}
