@@ -771,3 +771,45 @@ fn execute_state_machine_returns_304_if_non_match_star_exists_and_is_a_head_or_g
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(304));
 }
+
+#[test]
+fn execute_state_machine_returns_412_if_resource_etag_in_if_non_match_and_is_not_a_head_or_get() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            headers: hashmap!{
+                s!("If-None-Match") => vec![h!("W/\"1234567890\""), h!("W/\"1234567891\"")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        allowed_methods: vec![s!("POST")],
+        generate_etag: Box::new(|_| Some(s!("1234567890"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(412));
+}
+
+#[test]
+fn execute_state_machine_returns_304_if_resource_etag_in_if_non_match_and_is_a_head_or_get() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            headers: hashmap!{
+                s!("If-None-Match") => vec![h!("\"1234567890\""), h!("\"1234567891\"")]
+            },
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        generate_etag: Box::new(|_| Some(s!("1234567890"))),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(304));
+}

@@ -210,6 +210,7 @@ enum Decision {
     J18GetHead,
     K5HasMovedPermanently,
     K7ResourcePreviouslyExisted,
+    K13ETagInIfNoneMatch,
     L5HasMovedTemporarily,
     L7Post,
     M5Post,
@@ -264,10 +265,11 @@ lazy_static! {
         Decision::H11IfUnmodifiedSinceValid => Transition::Branch(Decision::H12LastModifiedGreaterThanUMS, Decision::I12IfNoneMatchExists),
         Decision::H12LastModifiedGreaterThanUMS => Transition::Branch(Decision::End(412), Decision::I12IfNoneMatchExists),
         Decision::I4HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::P3Conflict),
-        Decision::I12IfNoneMatchExists => Transition::Branch(Decision::I13IfNoneMatchStarExists, /* --> */Decision::End(200)),
-        Decision::I13IfNoneMatchStarExists => Transition::Branch(Decision::J18GetHead, /* --> */Decision::End(200)),
         Decision::I7Put => Transition::Branch(Decision::I4HasMovedPermanently, Decision::K7ResourcePreviouslyExisted),
+        Decision::I12IfNoneMatchExists => Transition::Branch(Decision::I13IfNoneMatchStarExists, /* --> */Decision::End(200)),
+        Decision::I13IfNoneMatchStarExists => Transition::Branch(Decision::J18GetHead, Decision::K13ETagInIfNoneMatch),
         Decision::J18GetHead => Transition::Branch(Decision::End(304), Decision::End(412)),
+        Decision::K13ETagInIfNoneMatch => Transition::Branch(Decision::J18GetHead, /* --> */Decision::End(200)),
         Decision::K5HasMovedPermanently => Transition::Branch(Decision::End(301), Decision::L5HasMovedTemporarily),
         Decision::K7ResourcePreviouslyExisted => Transition::Branch(Decision::K5HasMovedPermanently, Decision::L7Post),
         Decision::L5HasMovedTemporarily => Transition::Branch(Decision::End(307), Decision::M5Post),
@@ -277,6 +279,22 @@ lazy_static! {
         Decision::N5PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(410)),
         Decision::P3Conflict => Transition::Branch(Decision::End(409), /* --> */Decision::End(200)),
     };
+}
+
+fn resource_etag_matches_header_values(resource: &WebmachineResource, context: &mut WebmachineContext,
+    header_values: &Vec<HeaderValue>) -> bool {
+    match resource.generate_etag.as_ref()(context) {
+        Some(etag) => {
+            header_values.iter().find(|val| {
+                if val.value.starts_with("W/") {
+                    val.weak_etag().unwrap() == etag
+                } else {
+                    val.value == etag
+                }
+            }).is_some()
+        },
+        None => false
+    }
 }
 
 fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resource: &WebmachineResource) -> bool {
@@ -358,18 +376,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
         &Decision::G11EtagInIfMatch => {
             let header_values = context.request.find_header(&s!("If-Match"));
-            match resource.generate_etag.as_ref()(context) {
-                Some(etag) => {
-                    header_values.iter().find(|val| {
-                        if val.value.starts_with("W/") {
-                            val.weak_etag().unwrap() == etag
-                        } else {
-                            val.value == etag
-                        }
-                    }).is_some()
-                },
-                None => false
-            }
+            resource_etag_matches_header_values(resource, context, &header_values)
         },
         &Decision::H10IfUnmodifiedSinceExists => context.request.has_header(&s!("If-Unmodified-Since")),
         &Decision::H11IfUnmodifiedSinceValid => {
@@ -394,10 +401,14 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             }
         },
         &Decision::I7Put => context.request.is_put(),
-        &Decision::J18GetHead => context.request.is_get_or_head(),
         &Decision::I12IfNoneMatchExists => context.request.has_header(&s!("If-None-Match")),
         &Decision::I13IfNoneMatchStarExists => context.request.has_header_value(&s!("If-None-Match"), &s!("*")),
+        &Decision::J18GetHead => context.request.is_get_or_head(),
         &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
+        &Decision::K13ETagInIfNoneMatch => {
+            let header_values = context.request.find_header(&s!("If-None-Match"));
+            resource_etag_matches_header_values(resource, context, &header_values)
+        },
         &Decision::L5HasMovedTemporarily => match resource.moved_temporarily.as_ref()(context) {
             Some(location) => {
                 context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
