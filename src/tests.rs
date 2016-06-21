@@ -835,3 +835,22 @@ fn execute_state_machine_returns_304_if_the_resource_last_modified_gt_modified_s
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(304));
 }
+
+#[test]
+fn execute_state_machine_returns_202_if_delete_was_not_enacted() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("DELETE"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        delete_resource: Box::new(|_| false),
+        allowed_methods: vec![s!("DELETE")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(202));
+}

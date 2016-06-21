@@ -66,6 +66,11 @@ impl WebmachineRequest {
         self.method.to_uppercase() == "POST"
     }
 
+    /// If the request is a delete
+    pub fn is_delete(&self) -> bool {
+        self.method.to_uppercase() == "DELETE"
+    }
+
     /// If an Accept header exists
     pub fn has_accept_header(&self) -> bool {
         self.has_header(&s!("ACCEPT"))

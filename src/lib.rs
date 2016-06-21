@@ -120,6 +120,10 @@ pub struct WebmachineResource {
     /// Last-Modified header in the response and used in negotiating conditional requests.
     /// Default is None
     pub last_modified: Box<Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>,
+    /// Called when a DELETE request should be enacted. Return true if the deletion succeeded,
+    /// and false if the deletion was accepted but cannot yet be guaranteed to have finished.
+    /// Defaults to true.
+    pub delete_resource: Box<Fn(&mut WebmachineContext) -> bool>,
 }
 
 impl WebmachineResource {
@@ -152,7 +156,8 @@ impl WebmachineResource {
             is_conflict: Box::new(|_| false),
             allow_missing_post: Box::new(|_| false),
             generate_etag: Box::new(|_| None),
-            last_modified: Box::new(|_| None)
+            last_modified: Box::new(|_| None),
+            delete_resource: Box::new(|_| true)
         }
     }
 }
@@ -219,6 +224,8 @@ enum Decision {
     L17IfLastModifiedGreaterThanMS,
     M5Post,
     M7PostToMissingResource,
+    M16Delete,
+    M16DeleteEnacted,
     N5PostToMissingResource,
     P3Conflict
 }
@@ -278,12 +285,14 @@ lazy_static! {
         Decision::K7ResourcePreviouslyExisted => Transition::Branch(Decision::K5HasMovedPermanently, Decision::L7Post),
         Decision::L5HasMovedTemporarily => Transition::Branch(Decision::End(307), Decision::M5Post),
         Decision::L7Post => Transition::Branch(Decision::M7PostToMissingResource, Decision::End(404)),
-        Decision::L13IfModifiedSinceExists => Transition::Branch(Decision::L14IfModifiedSinceValid, /* --> */Decision::End(200)),
-        Decision::L14IfModifiedSinceValid => Transition::Branch(Decision::L15IfModifiedSinceGreaterThanNow, /* --> */Decision::End(200)),
-        Decision::L15IfModifiedSinceGreaterThanNow => Transition::Branch(/* --> */Decision::End(200), Decision::L17IfLastModifiedGreaterThanMS),
-        Decision::L17IfLastModifiedGreaterThanMS => Transition::Branch(/* --> */Decision::End(200), Decision::End(304)),
+        Decision::L13IfModifiedSinceExists => Transition::Branch(Decision::L14IfModifiedSinceValid, Decision::M16Delete),
+        Decision::L14IfModifiedSinceValid => Transition::Branch(Decision::L15IfModifiedSinceGreaterThanNow, Decision::M16Delete),
+        Decision::L15IfModifiedSinceGreaterThanNow => Transition::Branch(Decision::M16Delete, Decision::L17IfLastModifiedGreaterThanMS),
+        Decision::L17IfLastModifiedGreaterThanMS => Transition::Branch(Decision::M16Delete, Decision::End(304)),
         Decision::M5Post => Transition::Branch(Decision::N5PostToMissingResource, Decision::End(410)),
         Decision::M7PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(404)),
+        Decision::M16Delete => Transition::Branch(Decision::M16DeleteEnacted, /* --> */Decision::End(200)),
+        Decision::M16DeleteEnacted => Transition::Branch(/* --> */Decision::End(200), Decision::End(202)),
         Decision::N5PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(410)),
         Decision::P3Conflict => Transition::Branch(Decision::End(409), /* --> */Decision::End(200)),
     };
@@ -443,6 +452,8 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             None => false
         },
         &Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource => resource.allow_missing_post.as_ref()(context),
+        &Decision::M16Delete => context.request.is_delete(),
+        &Decision::M16DeleteEnacted => resource.delete_resource.as_ref()(context),
         &Decision::P3Conflict => resource.is_conflict.as_ref()(context),
         _ => false
     }
