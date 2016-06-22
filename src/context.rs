@@ -143,7 +143,7 @@ pub struct WebmachineResponse {
     /// status code to return
     pub status: u16,
     /// headers to return
-    pub headers: BTreeMap<String, Vec<HeaderValue>>
+    pub headers: BTreeMap<String, Vec<HeaderValue>>,
 }
 
 impl WebmachineResponse {
@@ -208,7 +208,9 @@ pub struct WebmachineContext {
     /// parsed date and time from the If-Unmodified-Since header
     pub if_unmodified_since: Option<DateTime<FixedOffset>>,
     /// parsed date and time from the If-Modified-Since header
-    pub if_modified_since: Option<DateTime<FixedOffset>>
+    pub if_modified_since: Option<DateTime<FixedOffset>>,
+    /// If the response should be a redirect
+    pub redirect: bool
 }
 
 impl WebmachineContext {
@@ -222,7 +224,8 @@ impl WebmachineContext {
             selected_charset: None,
             selected_encoding: None,
             if_unmodified_since: None,
-            if_modified_since: None
+            if_modified_since: None,
+            redirect: false
         }
     }
 }

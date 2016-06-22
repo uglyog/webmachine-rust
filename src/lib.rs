@@ -131,6 +131,21 @@ pub struct WebmachineResource {
     /// If it does return true, then `create_path` will be called and the rest of the request will
     /// be treated much like a PUT to the path returned by that call. Default is false.
     pub post_is_create: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// # If `post_is_create` returns false, then this will be called to process any POST request.
+    /// If it succeeds, return `Ok(true)`, `Ok(false)` otherwise. If it fails for any reason,
+    /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
+    /// Default is false. If you want the result of processing the POST to be a redirect, set
+    /// `context.redirect` to true.
+    pub process_post: Box<Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+    /// This will be called on a POST request if `post_is_create` returns true. It should create
+    /// the new resource and return the path as a valid URI part following the dispatcher prefix.
+    /// That path will replace the previous one in the return value of `WebmachineRequest.request_path`
+    /// for all subsequent resource function calls in the course of this request and will be set
+    /// as the value of the Location header of the response. If it fails for any reason,
+    /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
+    /// Default will return an `Ok(WebmachineRequest.request_path)`. If you want the result of
+    /// processing the POST to be a redirect, set `context.redirect` to true.
+    pub create_path: Box<Fn(&mut WebmachineContext) -> Result<String, u16>>,
 }
 
 impl WebmachineResource {
@@ -166,6 +181,8 @@ impl WebmachineResource {
             last_modified: Box::new(|_| None),
             delete_resource: Box::new(|_| Ok(true)),
             post_is_create: Box::new(|_| false),
+            process_post: Box::new(|_| Ok(false)),
+            create_path: Box::new(|context| Ok(context.request.request_path.clone())),
         }
     }
 }
@@ -180,6 +197,22 @@ fn extract_path(uri: &RequestUri) -> String {
 
 fn sanitise_path(path: &String) -> Vec<String> {
     path.split("/").filter(|p| !p.is_empty()).map(|p| p.to_string()).collect()
+}
+
+fn join_paths(base: &Vec<String>, path: &Vec<String>) -> String {
+    let mut paths = base.clone();
+    paths.extend_from_slice(path);
+    let filtered: Vec<String> = paths.iter().cloned().filter(|p| !p.is_empty()).collect();
+    if filtered.is_empty() {
+        s!("/")
+    } else {
+        let new_path = filtered.iter().join("/");
+        if new_path.starts_with("/") {
+            new_path
+        } else {
+            s!("/") + &new_path
+        }
+    }
 }
 
 const MAX_STATE_MACHINE_TRANSISIONS: u8 = 100;
@@ -235,6 +268,8 @@ enum Decision {
     M16Delete,
     M16DeleteEnacted,
     N5PostToMissingResource,
+    N11Redirect,
+    N16Post,
     P3Conflict
 }
 
@@ -261,8 +296,7 @@ enum DecisionResult {
 }
 
 impl DecisionResult {
-    /// Wraps a boolean into a DecisionResult
-    pub fn wrap(result: bool) -> DecisionResult {
+    fn wrap(result: bool) -> DecisionResult {
         if result {
             DecisionResult::True
         } else {
@@ -316,10 +350,12 @@ lazy_static! {
         Decision::L15IfModifiedSinceGreaterThanNow => Transition::Branch(Decision::M16Delete, Decision::L17IfLastModifiedGreaterThanMS),
         Decision::L17IfLastModifiedGreaterThanMS => Transition::Branch(Decision::M16Delete, Decision::End(304)),
         Decision::M5Post => Transition::Branch(Decision::N5PostToMissingResource, Decision::End(410)),
-        Decision::M7PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(404)),
-        Decision::M16Delete => Transition::Branch(Decision::M16DeleteEnacted, /* --> */Decision::End(200)),
+        Decision::M7PostToMissingResource => Transition::Branch(Decision::N11Redirect, Decision::End(404)),
+        Decision::M16Delete => Transition::Branch(Decision::M16DeleteEnacted, Decision::N16Post),
         Decision::M16DeleteEnacted => Transition::Branch(/* --> */Decision::End(200), Decision::End(202)),
-        Decision::N5PostToMissingResource => Transition::Branch(/* --> */Decision::End(200), Decision::End(410)),
+        Decision::N5PostToMissingResource => Transition::Branch(Decision::N11Redirect, Decision::End(410)),
+        Decision::N11Redirect => Transition::Branch(Decision::End(303), /* --> */Decision::End(200)),
+        Decision::N16Post => Transition::Branch(Decision::N11Redirect, /* --> */Decision::End(200)),
         Decision::P3Conflict => Transition::Branch(Decision::End(409), /* --> */Decision::End(200)),
     };
 }
@@ -459,7 +495,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             },
             None => DecisionResult::False
         },
-        &Decision::L7Post | &Decision::M5Post => DecisionResult::wrap(context.request.is_post()),
+        &Decision::L7Post | &Decision::M5Post | &Decision::N16Post => DecisionResult::wrap(context.request.is_post()),
         &Decision::L13IfModifiedSinceExists => DecisionResult::wrap(context.request.has_header(&s!("If-Modified-Since"))),
         &Decision::L14IfModifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request,
             "If-Modified-Since", &mut context.if_modified_since)),
@@ -487,6 +523,25 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::M16DeleteEnacted => match resource.delete_resource.as_ref()(context) {
             Ok(result) => DecisionResult::wrap(result),
             Err(status) => DecisionResult::StatusCode(status)
+        },
+        &Decision::N11Redirect => {
+            if resource.post_is_create.as_ref()(context) {
+                match resource.create_path.as_ref()(context) {
+                    Ok(path) => {
+                        let base_path = sanitise_path(&context.request.base_path);
+                        let new_path = join_paths(&base_path, &sanitise_path(&path));
+                        context.request.request_path = path.clone();
+                        context.response.add_header(s!("Location"), vec![HeaderValue::basic(&new_path)]);
+                        DecisionResult::wrap(context.redirect)
+                    },
+                    Err(status) => DecisionResult::StatusCode(status)
+                }
+            } else {
+                match resource.process_post.as_ref()(context) {
+                    Ok(_) => DecisionResult::wrap(context.redirect),
+                    Err(status) => DecisionResult::StatusCode(status)
+                }
+            }
         },
         &Decision::P3Conflict => DecisionResult::wrap(resource.is_conflict.as_ref()(context)),
         _ => DecisionResult::False
@@ -554,7 +609,7 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
 
 fn update_paths_for_resource(request: &mut WebmachineRequest, base_path: &String) {
     request.base_path = base_path.clone();
-    if request.request_path.len() >  base_path.len() {
+    if request.request_path.len() > base_path.len() {
         let request_path = request.request_path.clone();
         let subpath = request_path.split_at(base_path.len()).1;
         if subpath.starts_with("/") {

@@ -4,7 +4,8 @@ use super::{
     execute_state_machine,
     update_paths_for_resource,
     parse_header_values,
-    finalise_response
+    finalise_response,
+    join_paths
 };
 use super::context::*;
 use super::headers::*;
@@ -872,4 +873,121 @@ fn execute_state_machine_returns_a_resource_status_code_if_delete_fails() {
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(500));
+}
+
+#[test]
+fn join_paths_test() {
+    expect!(join_paths(&Vec::new(), &Vec::new())).to(be_equal_to(s!("/")));
+    expect!(join_paths(&vec![s!("")], &Vec::new())).to(be_equal_to(s!("/")));
+    expect!(join_paths(&Vec::new(), &vec![s!("")])).to(be_equal_to(s!("/")));
+    expect!(join_paths(&vec![s!("a"), s!("b"), s!("c")], &Vec::new())).to(be_equal_to(s!("/a/b/c")));
+    expect!(join_paths(&vec![s!("a"), s!("b"), s!("")], &Vec::new())).to(be_equal_to(s!("/a/b")));
+    expect!(join_paths(&Vec::new(), &vec![s!("a"), s!("b"), s!("c")])).to(be_equal_to(s!("/a/b/c")));
+    expect!(join_paths(&vec![s!("a"), s!("b"), s!("c")], &vec![s!("d"), s!("e"), s!("f")])).to(be_equal_to(s!("/a/b/c/d/e/f")));
+}
+
+#[test]
+fn execute_state_machine_returns_a_resource_status_code_if_post_fails_and_post_is_create() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        post_is_create: Box::new(|_| true),
+        create_path: Box::new(|_| Err(500)),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(500));
+}
+
+#[test]
+fn execute_state_machine_returns_a_resource_status_code_if_post_fails_and_post_is_not_create() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        post_is_create: Box::new(|_| false),
+        process_post: Box::new(|_| Err(500)),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(500));
+}
+
+#[test]
+fn execute_state_machine_returns_303_and_post_is_create_and_redirect_is_set() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            base_path: s!("/base/path"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        post_is_create: Box::new(|_| true),
+        create_path: Box::new(|context| { context.redirect = true; Ok(s!("/new/path")) }),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(303));
+    expect(context.response.headers).to(be_equal_to(btreemap!{
+        s!("Location") => vec![h!("/base/path/new/path")]
+    }));
+}
+
+#[test]
+fn execute_state_machine_returns_303_if_post_is_not_create_and_redirect_is_set() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        post_is_create: Box::new(|_| false),
+        process_post: Box::new(|context| { context.redirect = true; Ok(true) }),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(303));
+}
+
+#[test]
+fn execute_state_machine_returns_303_if_post_to_missing_resource_and_redirect_is_set() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| false),
+        previously_existed: Box::new(|_| false),
+        allow_missing_post: Box::new(|_| true),
+        post_is_create: Box::new(|_| false),
+        process_post: Box::new(|context| { context.redirect = true; Ok(true) }),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(303));
 }
