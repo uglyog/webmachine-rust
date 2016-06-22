@@ -144,6 +144,8 @@ pub struct WebmachineResponse {
     pub status: u16,
     /// headers to return
     pub headers: BTreeMap<String, Vec<HeaderValue>>,
+    /// Response Body
+    pub body: Option<String>
 }
 
 impl WebmachineResponse {
@@ -151,7 +153,8 @@ impl WebmachineResponse {
     pub fn default() -> WebmachineResponse {
         WebmachineResponse {
             status: 200,
-            headers: BTreeMap::new()
+            headers: BTreeMap::new(),
+            body: None
         }
     }
 
@@ -188,6 +191,14 @@ impl WebmachineResponse {
             s!("Access-Control-Allow-Headers") => vec![s!("Content-Type")]
         }
     }
+
+    /// If the response has a body
+    pub fn has_body(&self) -> bool {
+        match &self.body {
+            &None => false,
+            &Some(ref body) => !body.is_empty()
+        }
+    }
 }
 
 /// Main context struct that holds the request and response.
@@ -210,7 +221,9 @@ pub struct WebmachineContext {
     /// parsed date and time from the If-Modified-Since header
     pub if_modified_since: Option<DateTime<FixedOffset>>,
     /// If the response should be a redirect
-    pub redirect: bool
+    pub redirect: bool,
+    /// If a new resource was created
+    pub new_resource: bool
 }
 
 impl WebmachineContext {
@@ -225,7 +238,8 @@ impl WebmachineContext {
             selected_encoding: None,
             if_unmodified_since: None,
             if_modified_since: None,
-            redirect: false
+            redirect: false,
+            new_resource: false
         }
     }
 }

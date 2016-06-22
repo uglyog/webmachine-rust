@@ -146,6 +146,14 @@ pub struct WebmachineResource {
     /// Default will return an `Ok(WebmachineRequest.request_path)`. If you want the result of
     /// processing the POST to be a redirect, set `context.redirect` to true.
     pub create_path: Box<Fn(&mut WebmachineContext) -> Result<String, u16>>,
+    /// This will be called to process any PUT request. If it succeeds, return `Ok(true)`,
+    /// `Ok(false)` otherwise. If it fails for any reason, return an Err with the status code
+    /// you wish returned (e.g., a 500 status makes sense). Default is `Ok(true)`
+    pub process_put: Box<Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+    /// If this returns true, then it is assumed that multiple representations of the response are
+    /// possible and a single one cannot be automatically chosen, so a 300 Multiple Choices will
+    /// be sent instead of a 200. Default is false.
+    pub multiple_choices: Box<Fn(&mut WebmachineContext) -> bool>
 }
 
 impl WebmachineResource {
@@ -182,6 +190,8 @@ impl WebmachineResource {
             delete_resource: Box::new(|_| Ok(true)),
             post_is_create: Box::new(|_| false),
             process_post: Box::new(|_| Ok(false)),
+            process_put: Box::new(|_| Ok(true)),
+            multiple_choices: Box::new(|_| false),
             create_path: Box::new(|context| Ok(context.request.request_path.clone())),
         }
     }
@@ -266,11 +276,16 @@ enum Decision {
     M5Post,
     M7PostToMissingResource,
     M16Delete,
-    M16DeleteEnacted,
+    M20DeleteEnacted,
     N5PostToMissingResource,
     N11Redirect,
     N16Post,
-    P3Conflict
+    O14Conflict,
+    O16Put,
+    O18MultipleRepresentations,
+    O20ResponseHasBody,
+    P3Conflict,
+    P11NewResource
 }
 
 impl Decision {
@@ -351,12 +366,17 @@ lazy_static! {
         Decision::L17IfLastModifiedGreaterThanMS => Transition::Branch(Decision::M16Delete, Decision::End(304)),
         Decision::M5Post => Transition::Branch(Decision::N5PostToMissingResource, Decision::End(410)),
         Decision::M7PostToMissingResource => Transition::Branch(Decision::N11Redirect, Decision::End(404)),
-        Decision::M16Delete => Transition::Branch(Decision::M16DeleteEnacted, Decision::N16Post),
-        Decision::M16DeleteEnacted => Transition::Branch(/* --> */Decision::End(200), Decision::End(202)),
+        Decision::M16Delete => Transition::Branch(Decision::M20DeleteEnacted, Decision::N16Post),
+        Decision::M20DeleteEnacted => Transition::Branch(Decision::O20ResponseHasBody, Decision::End(202)),
         Decision::N5PostToMissingResource => Transition::Branch(Decision::N11Redirect, Decision::End(410)),
-        Decision::N11Redirect => Transition::Branch(Decision::End(303), /* --> */Decision::End(200)),
-        Decision::N16Post => Transition::Branch(Decision::N11Redirect, /* --> */Decision::End(200)),
-        Decision::P3Conflict => Transition::Branch(Decision::End(409), /* --> */Decision::End(200)),
+        Decision::N11Redirect => Transition::Branch(Decision::End(303), Decision::P11NewResource),
+        Decision::N16Post => Transition::Branch(Decision::N11Redirect, Decision::O16Put),
+        Decision::O14Conflict => Transition::Branch(Decision::End(409), Decision::P11NewResource),
+        Decision::O16Put => Transition::Branch(Decision::O14Conflict, Decision::O18MultipleRepresentations),
+        Decision::P3Conflict => Transition::Branch(Decision::End(409), Decision::P11NewResource),
+        Decision::P11NewResource => Transition::Branch(Decision::End(201), Decision::O20ResponseHasBody),
+        Decision::O18MultipleRepresentations => Transition::Branch(Decision::End(300), Decision::End(200)),
+        Decision::O20ResponseHasBody => Transition::Branch(Decision::O18MultipleRepresentations, Decision::End(204))
     };
 }
 
@@ -482,7 +502,12 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 None => DecisionResult::False
             }
         },
-        &Decision::I7Put => DecisionResult::wrap(context.request.is_put()),
+        &Decision::I7Put => if context.request.is_put() {
+            context.new_resource = true;
+            DecisionResult::True
+        } else {
+            DecisionResult::False
+        },
         &Decision::I12IfNoneMatchExists => DecisionResult::wrap(context.request.has_header(&s!("If-None-Match"))),
         &Decision::I13IfNoneMatchStarExists => DecisionResult::wrap(context.request.has_header_value(&s!("If-None-Match"), &s!("*"))),
         &Decision::J18GetHead => DecisionResult::wrap(context.request.is_get_or_head()),
@@ -518,9 +543,14 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
             None => DecisionResult::False
         },
         &Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource =>
-            DecisionResult::wrap(resource.allow_missing_post.as_ref()(context)),
+            if resource.allow_missing_post.as_ref()(context) {
+                context.new_resource = true;
+                DecisionResult::True
+            } else {
+                DecisionResult::False
+            },
         &Decision::M16Delete => DecisionResult::wrap(context.request.is_delete()),
-        &Decision::M16DeleteEnacted => match resource.delete_resource.as_ref()(context) {
+        &Decision::M20DeleteEnacted => match resource.delete_resource.as_ref()(context) {
             Ok(result) => DecisionResult::wrap(result),
             Err(status) => DecisionResult::StatusCode(status)
         },
@@ -543,7 +573,20 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
                 }
             }
         },
-        &Decision::P3Conflict => DecisionResult::wrap(resource.is_conflict.as_ref()(context)),
+        &Decision::P3Conflict | &Decision::O14Conflict => DecisionResult::wrap(resource.is_conflict.as_ref()(context)),
+        &Decision::P11NewResource => {
+            if context.request.is_put() {
+                match resource.process_put.as_ref()(context) {
+                    Ok(_) => DecisionResult::wrap(context.new_resource),
+                    Err(status) => DecisionResult::StatusCode(status)
+                }
+            } else {
+                DecisionResult::wrap(context.new_resource)
+            }
+        },
+        &Decision::O16Put => DecisionResult::wrap(context.request.is_put()),
+        &Decision::O18MultipleRepresentations => DecisionResult::wrap(resource.multiple_choices.as_ref()(context)),
+        &Decision::O20ResponseHasBody => DecisionResult::wrap(context.response.has_body()),
         _ => DecisionResult::False
     }
 }

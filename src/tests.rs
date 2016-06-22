@@ -991,3 +991,157 @@ fn execute_state_machine_returns_303_if_post_to_missing_resource_and_redirect_is
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(303));
 }
+
+#[test]
+fn execute_state_machine_returns_201_if_post_creates_new_resource() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("POST"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| false),
+        previously_existed: Box::new(|_| false),
+        allow_missing_post: Box::new(|_| true),
+        post_is_create: Box::new(|_| true),
+        create_path: Box::new(|_| { Ok(s!("/new/path")) }),
+        allowed_methods: vec![s!("POST")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(201));
+    expect(context.response.headers).to(be_equal_to(btreemap!{
+        s!("Location") => vec![h!("/new/path")]
+    }));
+}
+
+#[test]
+fn execute_state_machine_returns_201_if_put_to_new_resource() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("PUT"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| false),
+        allowed_methods: vec![s!("PUT")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(201));
+}
+
+#[test]
+fn execute_state_machine_returns_409_for_existing_resource_if_the_put_request_is_a_conflict() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("PUT"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("PUT")],
+        resource_exists: Box::new(|_| true),
+        is_conflict: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(409));
+}
+
+#[test]
+fn execute_state_machine_returns_200_if_put_request_to_existing_resource() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("PUT"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("PUT")],
+        resource_exists: Box::new(|_| true),
+        process_put: Box::new(|context| { context.response.body = Some(s!("body")); Ok(true) }),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(200));
+}
+
+#[test]
+fn execute_state_machine_returns_204_if_put_request_to_existing_resource_with_no_response_body() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("PUT"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        allowed_methods: vec![s!("PUT")],
+        resource_exists: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(204));
+}
+
+#[test]
+fn execute_state_machine_returns_300_if_multiple_choices_is_true() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        multiple_choices: Box::new(|_| true),
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(300));
+}
+
+#[test]
+fn execute_state_machine_returns_204_if_delete_was_enacted_and_response_has_no_body() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("DELETE"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        delete_resource: Box::new(|_| Ok(true)),
+        allowed_methods: vec![s!("DELETE")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(204));
+}
+
+#[test]
+fn execute_state_machine_returns_200_if_delete_was_enacted_and_response_has_a_body() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("DELETE"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        delete_resource: Box::new(|context| { context.response.body = Some(s!("body")); Ok(true) }),
+        allowed_methods: vec![s!("DELETE")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(200));
+}
