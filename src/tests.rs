@@ -250,10 +250,10 @@ fn parse_header_test() {
         .to(be_equal_to(vec![s!("HEADER A"), s!("header B")]));
     expect(parse_header_values(s!("text/plain;  q=0.5,   text/html,text/x-dvi; q=0.8, text/x-c")))
         .to(be_equal_to(vec![
-            HeaderValue { value: s!("text/plain"), params: hashmap!{s!("q") => s!("0.5")} },
-            HeaderValue { value: s!("text/html"), params: hashmap!{} },
-            HeaderValue { value: s!("text/x-dvi"), params: hashmap!{s!("q") => s!("0.8")} },
-            HeaderValue { value: s!("text/x-c"), params: hashmap!{} }
+            HeaderValue { value: s!("text/plain"), params: hashmap!{s!("q") => s!("0.5")}, quote: false },
+            HeaderValue { value: s!("text/html"), params: hashmap!{}, quote: false },
+            HeaderValue { value: s!("text/x-dvi"), params: hashmap!{s!("q") => s!("0.8")}, quote: false },
+            HeaderValue { value: s!("text/x-c"), params: hashmap!{}, quote: false }
         ]));
 }
 
@@ -351,7 +351,7 @@ fn execute_state_machine_sets_content_type_header_if_the_request_does_have_an_ac
     execute_state_machine(&mut context, &resource);
     finalise_response(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(200));
-    expect(context.response.headers).to(be_equal_to(btreemap!{ s!("Content-Type") => vec![h!("application/xml;charset=ISO-8859-1")] }));
+    expect(context.response.headers.get(&s!("Content-Type")).unwrap()).to(be_equal_to(&vec![h!("application/xml;charset=ISO-8859-1")]));
 }
 
 #[test]
@@ -430,7 +430,7 @@ fn execute_state_machine_sets_the_charset_if_the_request_does_have_an_acceptable
     execute_state_machine(&mut context, &resource);
     finalise_response(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(200));
-    expect(context.response.headers).to(be_equal_to(btreemap!{ s!("Content-Type") => vec![h!("application/json;charset=UTF-8")] }));
+    expect(context.response.headers.get(&s!("Content-Type")).unwrap()).to(be_equal_to(&vec![h!("application/json;charset=UTF-8")]));
 }
 
 #[test]

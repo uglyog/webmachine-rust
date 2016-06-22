@@ -153,7 +153,9 @@ pub struct WebmachineResource {
     /// If this returns true, then it is assumed that multiple representations of the response are
     /// possible and a single one cannot be automatically chosen, so a 300 Multiple Choices will
     /// be sent instead of a 200. Default is false.
-    pub multiple_choices: Box<Fn(&mut WebmachineContext) -> bool>
+    pub multiple_choices: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// If the resource expires, this should return the date/time it expires. Default is None.
+    pub expires: Box<Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>
 }
 
 impl WebmachineResource {
@@ -193,6 +195,7 @@ impl WebmachineResource {
             process_put: Box::new(|_| Ok(true)),
             multiple_choices: Box::new(|_| false),
             create_path: Box::new(|context| Ok(context.request.request_path.clone())),
+            expires: Box::new(|_| None)
         }
     }
 }
@@ -701,17 +704,55 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
         };
         let header = HeaderValue {
             value: media_type,
-            params: hashmap!{ s!("charset") => charset }
+            params: hashmap!{ s!("charset") => charset },
+            quote: false
         };
         context.response.add_header(s!("Content-Type"), vec![header]);
     }
 
-    if !resource.variances.is_empty() && !context.response.has_header(&s!("Vary")) {
-        context.response.add_header(s!("Vary"), resource.variances
+    let mut vary_header = if !context.response.has_header(&s!("Vary")) {
+        resource.variances
             .iter()
             .map(|h| HeaderValue::parse_string(h.clone()))
             .collect()
-        );
+    } else {
+        Vec::new()
+    };
+
+    if resource.languages_provided.len() > 1 {
+        vary_header.push(h!("Accept-Language"));
+    }
+    if resource.charsets_provided.len() > 1 {
+        vary_header.push(h!("Accept-Charset"));
+    }
+    if resource.encodings_provided.len() > 1 {
+        vary_header.push(h!("Accept-Encoding"));
+    }
+    if resource.produces.len() > 1 {
+        vary_header.push(h!("Accept"));
+    }
+
+    context.response.add_header(s!("Vary"), vary_header.iter().cloned().unique().collect());
+
+    if context.request.is_get_or_head() {
+        match resource.generate_etag.as_ref()(context) {
+            Some(etag) => context.response.add_header(s!("ETag"), vec![HeaderValue::basic(&etag).quote()]),
+            None => ()
+        }
+        match resource.expires.as_ref()(context) {
+            Some(datetime) => context.response.add_header(s!("Expires"),
+                vec![HeaderValue::basic(&datetime.to_rfc2822()).quote()]),
+            None => ()
+        }
+        match resource.last_modified.as_ref()(context) {
+            Some(datetime) => context.response.add_header(s!("Last-Modified"),
+                vec![HeaderValue::basic(&datetime.to_rfc2822()).quote()]),
+            None => ()
+        }
+
+        //   content_type = metadata[CONTENT_TYPE]
+        //   response.body = result
+        //   encode_body
     }
 
     match &resource.finalise_response {

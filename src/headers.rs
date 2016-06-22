@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::str::Chars;
 use std::iter::Peekable;
+use std::hash::{Hash, Hasher};
 use itertools::Itertools;
 
 const SEPERATORS: [char; 10] = ['(', ')', '<', '>', '@', ',', ';', '=', '{', '}'];
@@ -116,12 +117,14 @@ fn skip_whitespace(chars: &mut Peekable<Chars>) {
 
 
 /// Struct to represent a header value and a map of header value parameters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub struct HeaderValue {
     /// Value of the header
     pub value: String,
     /// Map of header value parameters
-    pub params: HashMap<String, String>
+    pub params: HashMap<String, String>,
+    /// If the header should be qouted
+    pub quote: bool
 }
 
 impl HeaderValue {
@@ -140,7 +143,8 @@ impl HeaderValue {
                             map.insert(params.0.clone(), params.1.clone());
                         }
                         map
-                    })
+                    }),
+                quote: false
             }
         }
     }
@@ -149,18 +153,28 @@ impl HeaderValue {
     pub fn basic(s: &String) -> HeaderValue {
         HeaderValue {
             value: s.clone(),
-            params: HashMap::new()
+            params: HashMap::new(),
+            quote: false
         }
     }
 
     /// Converts this header value into a string representation
     pub fn to_string(&self) -> String {
-        if self.params.is_empty() {
-            self.value.clone()
+        let sparams = self.params.iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .join("; ");
+        if self.quote {
+            if sparams.is_empty() {
+                format!("\"{}\"", self.value)
+            } else {
+                format!("\"{}\"; {}", self.value, sparams)
+            }
         } else {
-            format!("{}; {}", self.value, self.params.iter()
-                .map(|(k, v)| format!("{}={}", k, v))
-                .join("; "))
+            if self.params.is_empty() {
+                self.value.clone()
+            } else {
+                format!("{}; {}", self.value, sparams)
+            }
         }
     }
 
@@ -172,6 +186,12 @@ impl HeaderValue {
         } else {
             None
         }
+    }
+
+    /// Convertes this header value into a quoted header value
+    pub fn quote(mut self) -> HeaderValue {
+        self.quote = true;
+        self
     }
 }
 
@@ -193,6 +213,16 @@ impl PartialEq<str> for HeaderValue {
     }
 }
 
+impl Hash for HeaderValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+        for (k, v) in self.params.clone() {
+            k.hash(state);
+            v.hash(state);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,47 +234,58 @@ mod tests {
         expect!(HeaderValue::parse_string(s!("A B"))).to(be_equal_to(s!("A B")));
         expect!(HeaderValue::parse_string(s!("A; B"))).to(be_equal_to(HeaderValue {
             value: s!("A"),
-            params: hashmap!{ s!("B") => s!("") }
+            params: hashmap!{ s!("B") => s!("") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("text/html;charset=utf-8"))).to(be_equal_to(HeaderValue {
             value: s!("text/html"),
-            params: hashmap!{ s!("charset") => s!("utf-8") }
+            params: hashmap!{ s!("charset") => s!("utf-8") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("text/html;charset=UTF-8"))).to(be_equal_to(HeaderValue {
             value: s!("text/html"),
-            params: hashmap!{ s!("charset") => s!("UTF-8") }
+            params: hashmap!{ s!("charset") => s!("UTF-8") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("Text/HTML;Charset= \"utf-8\""))).to(be_equal_to(HeaderValue {
             value: s!("Text/HTML"),
-            params: hashmap!{ s!("Charset") => s!("utf-8") }
+            params: hashmap!{ s!("Charset") => s!("utf-8") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("text/html; charset = \" utf-8 \""))).to(be_equal_to(HeaderValue {
             value: s!("text/html"),
-            params: hashmap!{ s!("charset") => s!(" utf-8 ") }
+            params: hashmap!{ s!("charset") => s!(" utf-8 ") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!(";"))).to(be_equal_to(HeaderValue {
             value: s!(""),
-            params: hashmap!{}
+            params: hashmap!{},
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("A;b=c=d"))).to(be_equal_to(HeaderValue {
             value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c=d") }
+            params: hashmap!{ s!("b") => s!("c=d") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("A;b=\"c;d\""))).to(be_equal_to(HeaderValue {
             value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c;d") }
+            params: hashmap!{ s!("b") => s!("c;d") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("A;b=\"c\\\"d\""))).to(be_equal_to(HeaderValue {
             value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c\"d") }
+            params: hashmap!{ s!("b") => s!("c\"d") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("A;b=\"c,d\""))).to(be_equal_to(HeaderValue {
             value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c,d") }
+            params: hashmap!{ s!("b") => s!("c,d") },
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!("en;q=0.0"))).to(be_equal_to(HeaderValue {
             value: s!("en"),
-            params: hashmap!{ s!("q") => s!("0.0") }
+            params: hashmap!{ s!("q") => s!("0.0") },
+            quote: false
         }));
     }
 
@@ -252,11 +293,13 @@ mod tests {
     fn parse_qouted_header_value_test() {
         expect!(HeaderValue::parse_string(s!("\"*\""))).to(be_equal_to(HeaderValue {
             value: s!("*"),
-            params: hashmap!{}
+            params: hashmap!{},
+            quote: false
         }));
         expect!(HeaderValue::parse_string(s!(" \"quoted; value\""))).to(be_equal_to(HeaderValue {
             value: s!("quoted; value"),
-            params: hashmap!{}
+            params: hashmap!{},
+            quote: false
         }));
     }
 
@@ -268,14 +311,16 @@ mod tests {
         let header = HeaderValue::parse_string(etag);
         expect!(header.clone()).to(be_equal_to(HeaderValue {
             value: s!("1234567890"),
-            params: hashmap!{}
+            params: hashmap!{},
+            quote: false
         }));
         expect!(header.weak_etag()).to(be_none());
 
         let weak_etag_value = HeaderValue::parse_string(weak_etag.clone());
         expect!(weak_etag_value.clone()).to(be_equal_to(HeaderValue {
             value: weak_etag.clone(),
-            params: hashmap!{}
+            params: hashmap!{},
+            quote: false
         }));
         expect!(weak_etag_value.weak_etag()).to(be_some().value("1234567890"));
     }
