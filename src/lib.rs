@@ -120,10 +120,17 @@ pub struct WebmachineResource {
     /// Last-Modified header in the response and used in negotiating conditional requests.
     /// Default is None
     pub last_modified: Box<Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>,
-    /// Called when a DELETE request should be enacted. Return true if the deletion succeeded,
-    /// and false if the deletion was accepted but cannot yet be guaranteed to have finished.
-    /// Defaults to true.
-    pub delete_resource: Box<Fn(&mut WebmachineContext) -> bool>,
+    /// Called when a DELETE request should be enacted. Return `Ok(true)` if the deletion succeeded,
+    /// and `Ok(false)` if the deletion was accepted but cannot yet be guaranteed to have finished.
+    /// If the delete fails for any reason, return an Err with the status code you wish returned
+    /// (a 500 status makes sense).
+    /// Defaults to `Ok(true)`.
+    pub delete_resource: Box<Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+    /// If POST requests should be treated as a request to put content into a (potentially new)
+    /// resource as opposed to a generic submission for processing, then this should return true.
+    /// If it does return true, then `create_path` will be called and the rest of the request will
+    /// be treated much like a PUT to the path returned by that call. Default is false.
+    pub post_is_create: Box<Fn(&mut WebmachineContext) -> bool>,
 }
 
 impl WebmachineResource {
@@ -157,7 +164,8 @@ impl WebmachineResource {
             allow_missing_post: Box::new(|_| false),
             generate_etag: Box::new(|_| None),
             last_modified: Box::new(|_| None),
-            delete_resource: Box::new(|_| true)
+            delete_resource: Box::new(|_| Ok(true)),
+            post_is_create: Box::new(|_| false),
         }
     }
 }
@@ -243,6 +251,24 @@ impl Decision {
 enum Transition {
     To(Decision),
     Branch(Decision, Decision)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum DecisionResult {
+    True,
+    False,
+    StatusCode(u16)
+}
+
+impl DecisionResult {
+    /// Wraps a boolean into a DecisionResult
+    pub fn wrap(result: bool) -> DecisionResult {
+        if result {
+            DecisionResult::True
+        } else {
+            DecisionResult::False
+        }
+    }
 }
 
 lazy_static! {
@@ -331,131 +357,139 @@ fn validate_header_date(request: &WebmachineRequest, header: &str,
     }
 }
 
-fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resource: &WebmachineResource) -> bool {
+fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resource: &WebmachineResource) -> DecisionResult {
     match decision {
         &Decision::B10MethodAllowed => {
             match resource.allowed_methods
                 .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()) {
-                Some(_) => true,
+                Some(_) => DecisionResult::True,
                 None => {
                     context.response.add_header(s!("Allow"), resource.allowed_methods
                         .iter()
                         .map(HeaderValue::basic)
                         .collect());
-                    false
+                    DecisionResult::False
                 }
             }
         },
-        &Decision::B11UriTooLong => resource.uri_too_long.as_ref()(context),
-        &Decision::B12KnownMethod => resource.known_methods
-            .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some(),
-        &Decision::B13Available => resource.available.as_ref()(context),
-        &Decision::B9MalformedRequest => resource.malformed_request.as_ref()(context),
+        &Decision::B11UriTooLong => DecisionResult::wrap(resource.uri_too_long.as_ref()(context)),
+        &Decision::B12KnownMethod => DecisionResult::wrap(resource.known_methods
+            .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some()),
+        &Decision::B13Available => DecisionResult::wrap(resource.available.as_ref()(context)),
+        &Decision::B9MalformedRequest => DecisionResult::wrap(resource.malformed_request.as_ref()(context)),
         &Decision::B8Authorized => match resource.not_authorized.as_ref()(context) {
             Some(realm) => {
                 context.response.add_header(s!("WWW-Authenticate"), vec![HeaderValue::parse_string(realm.clone())]);
-                false
+                DecisionResult::False
             },
-            None => true
+            None => DecisionResult::True
         },
-        &Decision::B7Forbidden => resource.forbidden.as_ref()(context),
-        &Decision::B6UnsupportedContentHeader => resource.unsupported_content_headers.as_ref()(context),
-        &Decision::B5UnkownContentType => context.request.is_put_or_post() && resource.acceptable_content_types
+        &Decision::B7Forbidden => DecisionResult::wrap(resource.forbidden.as_ref()(context)),
+        &Decision::B6UnsupportedContentHeader => DecisionResult::wrap(resource.unsupported_content_headers.as_ref()(context)),
+        &Decision::B5UnkownContentType => DecisionResult::wrap(context.request.is_put_or_post() && resource.acceptable_content_types
                 .iter().find(|ct| context.request.content_type().to_uppercase() == ct.to_uppercase() )
-                .is_none(),
-        &Decision::B4RequestEntityTooLarge => context.request.is_put_or_post() && !resource.valid_entity_length.as_ref()(context),
-        &Decision::B3Options => context.request.is_options(),
-        &Decision::C3AcceptExists => context.request.has_accept_header(),
+                .is_none()),
+        &Decision::B4RequestEntityTooLarge => DecisionResult::wrap(context.request.is_put_or_post()
+            && !resource.valid_entity_length.as_ref()(context)),
+        &Decision::B3Options => DecisionResult::wrap(context.request.is_options()),
+        &Decision::C3AcceptExists => DecisionResult::wrap(context.request.has_accept_header()),
         &Decision::C4AcceptableMediaTypeAvailable => match content_negotiation::matching_content_type(resource, &context.request) {
             Some(media_type) => {
                 context.selected_media_type = Some(media_type);
-                true
+                DecisionResult::True
             },
-            None => false
+            None => DecisionResult::False
         },
-        &Decision::D4AcceptLanguageExists => context.request.has_accept_language_header(),
+        &Decision::D4AcceptLanguageExists => DecisionResult::wrap(context.request.has_accept_language_header()),
         &Decision::D5AcceptableLanguageAvailable => match content_negotiation::matching_language(resource, &context.request) {
             Some(language) => {
                 if language != "*" {
                     context.selected_language = Some(language.clone());
                     context.response.add_header(s!("Content-Language"), vec![HeaderValue::parse_string(language)]);
                 }
-                true
+                DecisionResult::True
             },
-            None => false
+            None => DecisionResult::False
         },
-        &Decision::E5AcceptCharsetExists => context.request.has_accept_charset_header(),
+        &Decision::E5AcceptCharsetExists => DecisionResult::wrap(context.request.has_accept_charset_header()),
         &Decision::E6AcceptableCharsetAvailable => match content_negotiation::matching_charset(resource, &context.request) {
             Some(charset) => {
                 if charset != "*" {
                     context.selected_charset = Some(charset.clone());
                 }
-                true
+                DecisionResult::True
             },
-            None => false
+            None => DecisionResult::False
         },
-        &Decision::F6AcceptEncodingExists => context.request.has_accept_encoding_header(),
+        &Decision::F6AcceptEncodingExists => DecisionResult::wrap(context.request.has_accept_encoding_header()),
         &Decision::F7AcceptableEncodingAvailable => match content_negotiation::matching_encoding(resource, &context.request) {
             Some(encoding) => {
                 context.selected_encoding = Some(encoding.clone());
                 if encoding != "identity" {
                     context.response.add_header(s!("Content-Encoding"), vec![HeaderValue::parse_string(encoding)]);
                 }
-                true
+                DecisionResult::True
             },
-            None => false
+            None => DecisionResult::False
         },
-        &Decision::G7ResourceExists => resource.resource_exists.as_ref()(context),
-        &Decision::G8IfMatchExists => context.request.has_header(&s!("If-Match")),
-        &Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => context.request.has_header_value(&s!("If-Match"), &s!("*")),
-        &Decision::G11EtagInIfMatch => resource_etag_matches_header_values(resource, context, "If-Match"),
-        &Decision::H10IfUnmodifiedSinceExists => context.request.has_header(&s!("If-Unmodified-Since")),
-        &Decision::H11IfUnmodifiedSinceValid => validate_header_date(&context.request, "If-Unmodified-Since", &mut context.if_unmodified_since),
+        &Decision::G7ResourceExists => DecisionResult::wrap(resource.resource_exists.as_ref()(context)),
+        &Decision::G8IfMatchExists => DecisionResult::wrap(context.request.has_header(&s!("If-Match"))),
+        &Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => DecisionResult::wrap(
+            context.request.has_header_value(&s!("If-Match"), &s!("*"))),
+        &Decision::G11EtagInIfMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-Match")),
+        &Decision::H10IfUnmodifiedSinceExists => DecisionResult::wrap(context.request.has_header(&s!("If-Unmodified-Since"))),
+        &Decision::H11IfUnmodifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request,
+            "If-Unmodified-Since", &mut context.if_unmodified_since)),
         &Decision::H12LastModifiedGreaterThanUMS => {
             match resource.last_modified.as_ref()(context) {
-                Some(datetime) => datetime > context.if_unmodified_since.unwrap(),
-                None => false
+                Some(datetime) => DecisionResult::wrap(datetime > context.if_unmodified_since.unwrap()),
+                None => DecisionResult::False
             }
         },
-        &Decision::I7Put => context.request.is_put(),
-        &Decision::I12IfNoneMatchExists => context.request.has_header(&s!("If-None-Match")),
-        &Decision::I13IfNoneMatchStarExists => context.request.has_header_value(&s!("If-None-Match"), &s!("*")),
-        &Decision::J18GetHead => context.request.is_get_or_head(),
-        &Decision::K7ResourcePreviouslyExisted => resource.previously_existed.as_ref()(context),
-        &Decision::K13ETagInIfNoneMatch => resource_etag_matches_header_values(resource, context, "If-None-Match"),
+        &Decision::I7Put => DecisionResult::wrap(context.request.is_put()),
+        &Decision::I12IfNoneMatchExists => DecisionResult::wrap(context.request.has_header(&s!("If-None-Match"))),
+        &Decision::I13IfNoneMatchStarExists => DecisionResult::wrap(context.request.has_header_value(&s!("If-None-Match"), &s!("*"))),
+        &Decision::J18GetHead => DecisionResult::wrap(context.request.is_get_or_head()),
+        &Decision::K7ResourcePreviouslyExisted => DecisionResult::wrap(resource.previously_existed.as_ref()(context)),
+        &Decision::K13ETagInIfNoneMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-None-Match")),
         &Decision::L5HasMovedTemporarily => match resource.moved_temporarily.as_ref()(context) {
             Some(location) => {
                 context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
-                true
+                DecisionResult::True
             },
-            None => false
+            None => DecisionResult::False
         },
-        &Decision::L7Post | &Decision::M5Post => context.request.is_post(),
-        &Decision::L13IfModifiedSinceExists => context.request.has_header(&s!("If-Modified-Since")),
-        &Decision::L14IfModifiedSinceValid => validate_header_date(&context.request, "If-Modified-Since", &mut context.if_modified_since),
+        &Decision::L7Post | &Decision::M5Post => DecisionResult::wrap(context.request.is_post()),
+        &Decision::L13IfModifiedSinceExists => DecisionResult::wrap(context.request.has_header(&s!("If-Modified-Since"))),
+        &Decision::L14IfModifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request,
+            "If-Modified-Since", &mut context.if_modified_since)),
         &Decision::L15IfModifiedSinceGreaterThanNow => {
             let datetime = context.if_modified_since.unwrap();
             let timezone = datetime.timezone();
-            datetime > UTC::now().with_timezone(&timezone)
+            DecisionResult::wrap(datetime > UTC::now().with_timezone(&timezone))
         },
         &Decision::L17IfLastModifiedGreaterThanMS => {
             match resource.last_modified.as_ref()(context) {
-                Some(datetime) => datetime > context.if_modified_since.unwrap(),
-                None => false
+                Some(datetime) => DecisionResult::wrap(datetime > context.if_modified_since.unwrap()),
+                None => DecisionResult::False
             }
         },
         &Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => match resource.moved_permanently.as_ref()(context) {
             Some(location) => {
                 context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
-                true
+                DecisionResult::True
             },
-            None => false
+            None => DecisionResult::False
         },
-        &Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource => resource.allow_missing_post.as_ref()(context),
-        &Decision::M16Delete => context.request.is_delete(),
-        &Decision::M16DeleteEnacted => resource.delete_resource.as_ref()(context),
-        &Decision::P3Conflict => resource.is_conflict.as_ref()(context),
-        _ => false
+        &Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource =>
+            DecisionResult::wrap(resource.allow_missing_post.as_ref()(context)),
+        &Decision::M16Delete => DecisionResult::wrap(context.request.is_delete()),
+        &Decision::M16DeleteEnacted => match resource.delete_resource.as_ref()(context) {
+            Ok(result) => DecisionResult::wrap(result),
+            Err(status) => DecisionResult::StatusCode(status)
+        },
+        &Decision::P3Conflict => DecisionResult::wrap(resource.is_conflict.as_ref()(context)),
+        _ => DecisionResult::False
     }
 }
 
@@ -476,14 +510,23 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
                     decision.clone()
                 },
                 &Transition::Branch(ref decision_true, ref decision_false) => {
-                    if execute_decision(&state, context, resource) {
-                        debug!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
-                        decisions.push((state, true, decision_true.clone()));
-                        decision_true.clone()
-                    } else {
-                        debug!("Transitioning from {:?} to {:?} as decision is false", state, decision_false);
-                        decisions.push((state, false, decision_false.clone()));
-                        decision_false.clone()
+                    match execute_decision(&state, context, resource) {
+                        DecisionResult::True => {
+                            debug!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
+                            decisions.push((state, true, decision_true.clone()));
+                            decision_true.clone()
+                        },
+                        DecisionResult::False => {
+                            debug!("Transitioning from {:?} to {:?} as decision is false", state, decision_false);
+                            decisions.push((state, false, decision_false.clone()));
+                            decision_false.clone()
+                        },
+                        DecisionResult::StatusCode(code) => {
+                            let decision = Decision::End(code);
+                            debug!("Transitioning from {:?} to {:?} as decision is a status code", state, decision);
+                            decisions.push((state, false, decision.clone()));
+                            decision.clone()
+                        }
                     }
                 }
             },

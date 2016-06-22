@@ -847,10 +847,29 @@ fn execute_state_machine_returns_202_if_delete_was_not_enacted() {
     };
     let resource = WebmachineResource {
         resource_exists: Box::new(|_| true),
-        delete_resource: Box::new(|_| false),
+        delete_resource: Box::new(|_| Ok(false)),
         allowed_methods: vec![s!("DELETE")],
         .. WebmachineResource::default()
     };
     execute_state_machine(&mut context, &resource);
     expect(context.response.status).to(be_equal_to(202));
+}
+
+#[test]
+fn execute_state_machine_returns_a_resource_status_code_if_delete_fails() {
+    let mut context = WebmachineContext {
+        request: WebmachineRequest {
+            method: s!("DELETE"),
+            .. WebmachineRequest::default()
+        },
+        .. WebmachineContext::default()
+    };
+    let resource = WebmachineResource {
+        resource_exists: Box::new(|_| true),
+        delete_resource: Box::new(|_| Err(500)),
+        allowed_methods: vec![s!("DELETE")],
+        .. WebmachineResource::default()
+    };
+    execute_state_machine(&mut context, &resource);
+    expect(context.response.status).to(be_equal_to(500));
 }
