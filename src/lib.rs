@@ -643,7 +643,6 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
         }
     }
     debug!("Final state is {:?}", state);
-    p!(decisions);
     match state {
         Decision::End(status) => context.response.status = status,
         Decision::A3Options => {
@@ -736,7 +735,9 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
         vary_header.push(h!("Accept"));
     }
 
-    context.response.add_header(s!("Vary"), vary_header.iter().cloned().unique().collect());
+    if vary_header.len() > 1 {
+        context.response.add_header(s!("Vary"), vary_header.iter().cloned().unique().collect());
+    }
 
     if context.request.is_get_or_head() {
         match resource.generate_etag.as_ref()(context) {
@@ -755,7 +756,7 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
         }
     }
 
-    if context.response.body.is_none() && context.response.status == 200 {
+    if context.response.body.is_none() && context.response.status == 200 && context.request.is_get() {
         match resource.render_response.as_ref()(context) {
             Some(body) => context.response.body = Some(body),
             None => ()
@@ -779,7 +780,7 @@ fn generate_hyper_response(context: &WebmachineContext, mut res: Response) -> Re
     }
     match context.response.body.clone() {
         Some(body) => res.send(body.as_bytes()),
-        None => Ok(())
+        None => res.start().unwrap().end()
     }
 }
 
