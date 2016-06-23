@@ -18,7 +18,8 @@ fn resource(path: &str) -> WebmachineRequest {
         request_path: s!(path),
         base_path: s!("/"),
         method: s!("GET"),
-        headers: HashMap::new()
+        headers: HashMap::new(),
+        body: None
     }
 }
 

@@ -11,7 +11,7 @@ extern crate hyper;
 extern crate chrono;
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::Error;
+use std::io::{Error, Read};
 use hyper::server::*;
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
@@ -685,13 +685,28 @@ fn headers_from_hyper_request(req: &Request) -> HashMap<String, Vec<HeaderValue>
         .collect()
 }
 
-fn request_from_hyper_request(req: &Request) -> WebmachineRequest {
+fn request_from_hyper_request(req: &mut Request) -> WebmachineRequest {
     let request_path = extract_path(&req.uri);
+    let mut buffer = String::new();
+    let body = match req.read_to_string(&mut buffer) {
+        Ok(size) => {
+            if size > 0 {
+                Some(buffer.clone())
+            } else {
+                None
+            }
+        },
+        Err(err) => {
+            warn!("Failed to read the body of the request - {}", err);
+            None
+        }
+    };
     WebmachineRequest {
         request_path: request_path.clone(),
         base_path: s!("/"),
         method: s!(req.method.as_ref()),
-        headers: headers_from_hyper_request(req)
+        headers: headers_from_hyper_request(req),
+        body: body
     }
 }
 
@@ -793,13 +808,13 @@ pub struct WebmachineDispatcher {
 impl WebmachineDispatcher {
     /// Main hyper dispatch function for the Webmachine. This will look for a matching resource
     /// based on the request path. If one is not found, a 404 Not Found response is returned
-    pub fn dispatch(&self, req: Request, res: Response) -> Result<(), Error> {
-        let mut context = self.context_from_hyper_request(&req);
+    pub fn dispatch(&self, mut req: Request, res: Response) -> Result<(), Error> {
+        let mut context = self.context_from_hyper_request(&mut req);
         self.dispatch_to_resource(&mut context);
         generate_hyper_response(&context, res)
     }
 
-    fn context_from_hyper_request(&self, req: &Request) -> WebmachineContext {
+    fn context_from_hyper_request(&self, req: &mut Request) -> WebmachineContext {
         let request = request_from_hyper_request(req);
         WebmachineContext {
             request: request,

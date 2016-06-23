@@ -15,7 +15,9 @@ pub struct WebmachineRequest {
     /// Request method
     pub method: String,
     /// Request headers
-    pub headers: HashMap<String, Vec<HeaderValue>>
+    pub headers: HashMap<String, Vec<HeaderValue>>,
+    /// Request body
+    pub body: Option<String>
 }
 
 impl WebmachineRequest {
@@ -25,7 +27,8 @@ impl WebmachineRequest {
             request_path: s!("/"),
             base_path: s!("/"),
             method: s!("GET"),
-            headers: HashMap::new()
+            headers: HashMap::new(),
+            body: None
         }
     }
 
