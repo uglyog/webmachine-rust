@@ -11,7 +11,8 @@ extern crate hyper;
 extern crate chrono;
 
 use std::collections::{BTreeMap, HashMap};
-use hyper::server::{Request, Response};
+use std::io::Error;
+use hyper::server::*;
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
 use itertools::Itertools;
@@ -40,6 +41,8 @@ pub struct WebmachineResource {
     /// This is called just before the final response is constructed and sent. It allows the resource
     /// an opportunity to modify the response after the webmachine has executed.
     pub finalise_response: Option<Box<Fn(&mut WebmachineContext)>>,
+    /// This is invoked to render the response for the resource
+    pub render_response: Box<Fn(&mut WebmachineContext) -> Option<String>>,
     /// Is the resource available? Returning false will result in a '503 Service Not Available'
     /// response. Defaults to true. If the resource is only temporarily not available,
     /// add a 'Retry-After' response header.
@@ -195,7 +198,8 @@ impl WebmachineResource {
             process_put: Box::new(|_| Ok(true)),
             multiple_choices: Box::new(|_| false),
             create_path: Box::new(|context| Ok(context.request.request_path.clone())),
-            expires: Box::new(|_| None)
+            expires: Box::new(|_| None),
+            render_response: Box::new(|_| None)
         }
     }
 }
@@ -749,10 +753,13 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
                 vec![HeaderValue::basic(&datetime.to_rfc2822()).quote()]),
             None => ()
         }
+    }
 
-        //   content_type = metadata[CONTENT_TYPE]
-        //   response.body = result
-        //   encode_body
+    if context.response.body.is_none() && context.response.status == 200 {
+        match resource.render_response.as_ref()(context) {
+            Some(body) => context.response.body = Some(body),
+            None => ()
+        }
     }
 
     match &resource.finalise_response {
@@ -763,12 +770,16 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
     debug!("Final response: {:?}", context.response);
 }
 
-fn generate_hyper_response(context: &WebmachineContext, res: &mut Response) {
+fn generate_hyper_response(context: &WebmachineContext, mut res: Response) -> Result<(), Error> {
     *res.status_mut() = StatusCode::from_u16(context.response.status);
     for (header, values) in context.response.headers.clone() {
         let header = header.clone();
         let header_values = values.iter().map(|h| h.to_string()).join(", ").into_bytes();
         res.headers_mut().set_raw(header, vec![header_values]);
+    }
+    match context.response.body.clone() {
+        Some(body) => res.send(body.as_bytes()),
+        None => Ok(())
     }
 }
 
@@ -781,10 +792,10 @@ pub struct WebmachineDispatcher {
 impl WebmachineDispatcher {
     /// Main hyper dispatch function for the Webmachine. This will look for a matching resource
     /// based on the request path. If one is not found, a 404 Not Found response is returned
-    pub fn dispatch(&self, req: Request, mut res: Response) {
+    pub fn dispatch(&self, req: Request, res: Response) -> Result<(), Error> {
         let mut context = self.context_from_hyper_request(&req);
         self.dispatch_to_resource(&mut context);
-        generate_hyper_response(&context, &mut res);
+        generate_hyper_response(&context, res)
     }
 
     fn context_from_hyper_request(&self, req: &Request) -> WebmachineContext {
