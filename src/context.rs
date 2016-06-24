@@ -231,7 +231,9 @@ pub struct WebmachineContext {
     /// If the response should be a redirect
     pub redirect: bool,
     /// If a new resource was created
-    pub new_resource: bool
+    pub new_resource: bool,
+    /// General store of metadata. You can use this to store attributes as the webmachine executes.
+    pub metadata: HashMap<String, String>
 }
 
 impl WebmachineContext {
@@ -247,7 +249,8 @@ impl WebmachineContext {
             if_unmodified_since: None,
             if_modified_since: None,
             redirect: false,
-            new_resource: false
+            new_resource: false,
+            metadata: HashMap::new()
         }
     }
 }

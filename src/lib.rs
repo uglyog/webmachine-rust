@@ -12,6 +12,8 @@ extern crate chrono;
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Error, Read};
+use std::sync::Mutex;
+use std::rc::Rc;
 use hyper::server::*;
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
@@ -802,10 +804,17 @@ fn generate_hyper_response(context: &WebmachineContext, mut res: Response) -> Re
 /// The main hyper dispatcher
 pub struct WebmachineDispatcher {
     /// Map of routes to webmachine resources
-    pub routes: BTreeMap<String, WebmachineResource>
+    pub routes: Mutex<BTreeMap<String, Rc<WebmachineResource>>>
 }
 
 impl WebmachineDispatcher {
+    /// Create a new Webmachine dispatcher given a map of routes to webmachine resources
+    pub fn new(routes: BTreeMap<String, Rc<WebmachineResource>>) -> WebmachineDispatcher {
+        WebmachineDispatcher {
+            routes: Mutex::new(routes.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        }
+    }
+
     /// Main hyper dispatch function for the Webmachine. This will look for a matching resource
     /// based on the request path. If one is not found, a 404 Not Found response is returned
     pub fn dispatch(&self, mut req: Request, res: Response) -> Result<(), Error> {
@@ -825,26 +834,33 @@ impl WebmachineDispatcher {
 
     fn match_paths(&self, request: &WebmachineRequest) -> Vec<String> {
         let request_path = sanitise_path(&request.request_path);
-        self.routes
+        let routes = self.routes.lock().unwrap();
+        routes
             .keys()
             .cloned()
             .filter(|k| request_path.starts_with(&sanitise_path(k)))
             .collect()
     }
 
+    fn lookup_resource(&self, path: &String) -> Rc<WebmachineResource> {
+        let routes = self.routes.lock().unwrap();
+        let resource = routes.get(path).unwrap();
+        resource.clone()
+    }
+
     /// Dispatches to the matching webmachine resource. If there is no matching resource, returns
     /// 404 Not Found response
     pub fn dispatch_to_resource(&self, context: &mut WebmachineContext) {
         let matching_paths = self.match_paths(&context.request);
-        let ordered_by_length = matching_paths.clone().iter()
+        let ordered_by_length = matching_paths.iter()
             .cloned()
             .sorted_by(|a, b| Ord::cmp(&b.len(), &a.len()));
         match ordered_by_length.first() {
             Some(path) => {
-                let resource = self.routes.get(path).unwrap();
                 update_paths_for_resource(&mut context.request, path);
-                execute_state_machine(context, resource);
-                finalise_response(context, resource);
+                let resource = self.lookup_resource(path);
+                execute_state_machine(context, &resource);
+                finalise_response(context, &resource);
             },
             None => context.response.status = 404
         };
