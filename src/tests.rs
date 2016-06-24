@@ -11,7 +11,7 @@ use super::context::*;
 use super::headers::*;
 use expectest::prelude::*;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use chrono::*;
 
 fn resource(path: &str) -> WebmachineRequest {
@@ -28,10 +28,10 @@ fn resource(path: &str) -> WebmachineRequest {
 fn path_matcher_test() {
     let dispatcher = WebmachineDispatcher::new(
         btreemap!{
-            s!("/") => Rc::new(WebmachineResource::default()),
-            s!("/path1") => Rc::new(WebmachineResource::default()),
-            s!("/path2") => Rc::new(WebmachineResource::default()),
-            s!("/path1/path3") => Rc::new(WebmachineResource::default())
+            s!("/") => Arc::new(WebmachineResource::default()),
+            s!("/path1") => Arc::new(WebmachineResource::default()),
+            s!("/path2") => Arc::new(WebmachineResource::default()),
+            s!("/path1/path3") => Arc::new(WebmachineResource::default())
         }
     );
     expect!(dispatcher.match_paths(&resource("/path1"))).to(be_equal_to(vec!["/", "/path1"]));
@@ -56,7 +56,7 @@ fn sanitise_path_test() {
 fn dispatcher_returns_404_if_there_is_no_matching_resource() {
     let mut context = WebmachineContext::default();
     let displatcher = WebmachineDispatcher::new(
-        btreemap!{ s!("/some/path") => Rc::new(WebmachineResource::default()) }
+        btreemap!{ s!("/some/path") => Arc::new(WebmachineResource::default()) }
     );
     displatcher.dispatch_to_resource(&mut context);
     expect(context.response.status).to(be_equal_to(404));

@@ -13,7 +13,7 @@ extern crate chrono;
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Error, Read};
 use std::sync::Mutex;
-use std::rc::Rc;
+use std::sync::Arc;
 use hyper::server::*;
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
@@ -804,12 +804,12 @@ fn generate_hyper_response(context: &WebmachineContext, mut res: Response) -> Re
 /// The main hyper dispatcher
 pub struct WebmachineDispatcher {
     /// Map of routes to webmachine resources
-    pub routes: Mutex<BTreeMap<String, Rc<WebmachineResource>>>
+    pub routes: Mutex<BTreeMap<String, Arc<WebmachineResource>>>
 }
 
 impl WebmachineDispatcher {
     /// Create a new Webmachine dispatcher given a map of routes to webmachine resources
-    pub fn new(routes: BTreeMap<String, Rc<WebmachineResource>>) -> WebmachineDispatcher {
+    pub fn new(routes: BTreeMap<String, Arc<WebmachineResource>>) -> WebmachineDispatcher {
         WebmachineDispatcher {
             routes: Mutex::new(routes.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         }
@@ -842,7 +842,7 @@ impl WebmachineDispatcher {
             .collect()
     }
 
-    fn lookup_resource(&self, path: &String) -> Rc<WebmachineResource> {
+    fn lookup_resource(&self, path: &String) -> Arc<WebmachineResource> {
         let routes = self.routes.lock().unwrap();
         let resource = routes.get(path).unwrap();
         resource.clone()
