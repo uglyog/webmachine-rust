@@ -19,11 +19,10 @@ REQUEST -> Hyper Handler -> WebmachineDispatcher -> WebmachineResource -> Your a
 
 ## Missing Features
 
-Currently the following features have not been implemented:
+Currently, the following features from webmachine-ruby have not been implemented:
 
-- Visual debugger (like Webmachine-Ruby)
+- Visual debugger
 - Streaming response bodies
--
 
 ## Implementation Deficiencies:
 
