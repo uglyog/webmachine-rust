@@ -2,6 +2,8 @@
 
 Port of Webmachine-Ruby (https://github.com/webmachine/webmachine-ruby) to Rust.
 
+[![Build Status](https://travis-ci.org/uglyog/webmachine-rust.svg?branch=master)](https://travis-ci.org/uglyog/webmachine-rust)
+
 webmachine-rust is a port of the Ruby version of webmachine. It implements a finite state machine for the HTTP protocol
 that provides semantic HTTP handling (based on the [diagram from the webmachine project](https://webmachine.github.io/images/http-headers-status-v3.png)).
 It is basically a HTTP toolkit for building HTTP-friendly applications using the [Hyper](https://crates.io/crates/hyper) rust crate.
