@@ -63,13 +63,16 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
              btreemap!{
                  "/myresource".to_string() => Arc::new(WebmachineResource {
                      // Methods allowed on this resource
-                     allowed_methods: vec!["OPTIONS".to_string(), "GET".to_string(), "HEAD".to_string(), "POST".to_string()],
+                     allowed_methods: vec!["OPTIONS".to_string(), "GET".to_string(),
+                        "HEAD".to_string(), "POST".to_string()],
                      // if the resource exists callback
                      resource_exists: Box::new(|context| true),
                      // callback to render the response for the resource
                      render_response: Box::new(|_| {
-                         let mut data = vec![Json::I64(1), Json::I64(2), Json::I64(3), Json::I64(4)];
-                         let json_response = Json::Object(btreemap!{ "data".to_string() => Json::Array(data) });
+                         let mut data = vec![Json::I64(1), Json::I64(2), Json::I64(3),
+                            Json::I64(4)];
+                         let json_response = Json::Object(btreemap!{
+                            "data".to_string() => Json::Array(data) });
                          Some(json_response.to_string())
                      }),
                      // callback to process the post for the resource
