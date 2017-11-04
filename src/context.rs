@@ -2,11 +2,13 @@
 //! executing in. Basically wraps the request and response.
 
 use std::collections::{HashMap, BTreeMap};
-use headers::*;
-use chrono::*;
+use headers::HeaderValue;
+use chrono::{DateTime, FixedOffset};
+use futures::{Future, Stream};
+use hyper::Body;
 
 /// Request that the state machine is executing against
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct WebmachineRequest {
     /// Path of the request relative to the resource
     pub request_path: String,
@@ -17,7 +19,7 @@ pub struct WebmachineRequest {
     /// Request headers
     pub headers: HashMap<String, Vec<HeaderValue>>,
     /// Request body
-    pub body: Option<String>
+    pub body: Option<Body>
 }
 
 impl WebmachineRequest {
@@ -210,7 +212,7 @@ impl WebmachineResponse {
 }
 
 /// Main context struct that holds the request and response.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct WebmachineContext {
     /// Request that the webmachine is executing against
     pub request: WebmachineRequest,
