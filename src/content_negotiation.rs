@@ -1,11 +1,11 @@
 //! The `content_negotiation` module deals with handling media types, languages, charsets and
 //! encodings as per https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html.
 
-use headers::*;
-use context::*;
-use super::*;
 use itertools::Itertools;
 use std::cmp::Ordering;
+use headers::{self, HeaderValue};
+use WebmachineResource;
+use context::WebmachineRequest;
 
 /// Enum to represent a match with media types
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

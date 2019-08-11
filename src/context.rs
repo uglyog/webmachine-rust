@@ -2,8 +2,8 @@
 //! executing in. Basically wraps the request and response.
 
 use std::collections::{HashMap, BTreeMap};
-use headers::*;
-use chrono::*;
+use headers::HeaderValue;
+use chrono::{DateTime, FixedOffset};
 
 /// Request that the state machine is executing against
 #[derive(Debug, Clone, PartialEq)]

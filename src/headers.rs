@@ -223,6 +223,12 @@ impl Hash for HeaderValue {
     }
 }
 
+/// Simple macro to convert a string to a `HeaderValue` struct.
+#[macro_export]
+macro_rules! h {
+    ($e:expr) => (HeaderValue::parse_string($e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

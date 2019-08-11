@@ -129,29 +129,22 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{Error, Read};
 use std::sync::Mutex;
 use std::sync::Arc;
-use hyper::server::*;
 use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
 use itertools::Itertools;
-use chrono::*;
+use chrono::{DateTime, FixedOffset, UTC};
+use context::{WebmachineContext, WebmachineResponse, WebmachineRequest};
+use hyper::server::{Request, Response};
+use headers::HeaderValue;
 
 /// Simple macro to convert a string slice to a `String` struct.
 macro_rules! s {
     ($e:expr) => ($e.to_string())
 }
 
-pub mod headers;
-
-/// Simple macro to convert a string to a `HeaderValue` struct.
-macro_rules! h {
-    ($e:expr) => (HeaderValue::parse_string($e.to_string()))
-}
-
+#[macro_use] pub mod headers;
 pub mod context;
 pub mod content_negotiation;
-
-use context::*;
-use headers::*;
 
 /// Struct to represent a resource in webmachine
 pub struct WebmachineResource {
