@@ -111,7 +111,7 @@ pub fn sort_media_types(media_types: &Vec<HeaderValue>) -> Vec<HeaderValue> {
         } else {
             order.reverse()
         }
-    })
+    }).collect()
 }
 
 /// Determines if the media types produced by the resource matches the acceptable media types
@@ -128,7 +128,6 @@ pub fn matching_content_type(resource: &WebmachineResource, request: &Webmachine
                 (produced_media_type.clone(), acceptable_media_type.clone(), produced_media_type.matches(&acceptable_media_type))
             })
             .sorted_by(|a, b| Ord::cmp(&a.2, &b.2))
-            .iter()
             .filter(|val| val.2 != MediaTypeMatch::None)
             .next().map(|result| result.0.to_string())
     } else {
@@ -208,7 +207,7 @@ impl HeaderValue {
 
 /// Sorts the list of media types by weighting
 pub fn sort_media_languages(media_languages: &Vec<HeaderValue>) -> Vec<MediaLanguage> {
-    media_languages.into_iter()
+    media_languages.iter()
         .cloned()
         .map(|lang| lang.as_media_language())
         .filter(|lang| lang.weight > 0.0)
@@ -217,6 +216,7 @@ pub fn sort_media_languages(media_languages: &Vec<HeaderValue>) -> Vec<MediaLang
             let weight_b = b.weight;
             weight_b.partial_cmp(&weight_a).unwrap_or(Ordering::Greater)
         })
+      .collect()
 }
 
 /// Determines if the languages produced by the resource matches the acceptable languages
@@ -306,6 +306,7 @@ pub fn sort_media_charsets(charsets: &Vec<HeaderValue>) -> Vec<Charset> {
             let weight_b = b.weight;
             weight_b.partial_cmp(&weight_a).unwrap_or(Ordering::Greater)
         })
+      .collect()
 }
 
 /// Determines if the charsets produced by the resource matches the acceptable charsets
@@ -395,6 +396,7 @@ pub fn sort_encodings(encodings: &Vec<HeaderValue>) -> Vec<Encoding> {
             let weight_b = b.weight;
             weight_b.partial_cmp(&weight_a).unwrap_or(Ordering::Greater)
         })
+      .collect()
 }
 
 /// Determines if the encodings supported by the resource matches the acceptable encodings
@@ -403,7 +405,6 @@ pub fn matching_encoding(resource: &WebmachineResource, request: &WebmachineRequ
     let identity = Encoding::parse_string(&s!("identity"));
     if request.has_accept_encoding_header() {
         let acceptable_encodings = sort_encodings(&request.accept_encoding());
-        p!(acceptable_encodings);
         if resource.encodings_provided.is_empty() {
             if acceptable_encodings.contains(&identity) {
                 Some(s!("identity"))
@@ -418,7 +419,7 @@ pub fn matching_encoding(resource: &WebmachineResource, request: &WebmachineRequ
                     (provided_encoding.clone(), provided_encoding.matches(&acceptable_encoding))
                 })
                 .find(|val| val.1)
-                .map(|result| { p!(result); result.0.to_string() })
+                .map(|result| { result.0.to_string() })
         }
     } else if resource.encodings_provided.is_empty() {
         Some(s!("identity"))

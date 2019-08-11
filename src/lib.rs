@@ -121,9 +121,8 @@ For an example of a project using this crate, have a look at the [Pact Mock Serv
 
 extern crate hyper;
 #[macro_use] extern crate log;
-#[macro_use] extern crate p_macro;
 #[macro_use] extern crate maplit;
-#[macro_use] extern crate itertools;
+extern crate itertools;
 #[macro_use] extern crate lazy_static;
 extern crate chrono;
 
@@ -969,9 +968,9 @@ impl WebmachineDispatcher {
     /// 404 Not Found response
     pub fn dispatch_to_resource(&self, context: &mut WebmachineContext) {
         let matching_paths = self.match_paths(&context.request);
-        let ordered_by_length = matching_paths.iter()
+        let ordered_by_length: Vec<String> = matching_paths.iter()
             .cloned()
-            .sorted_by(|a, b| Ord::cmp(&b.len(), &a.len()));
+            .sorted_by(|a, b| Ord::cmp(&b.len(), &a.len())).collect();
         match ordered_by_length.first() {
             Some(path) => {
                 update_paths_for_resource(&mut context.request, path);
