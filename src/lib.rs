@@ -45,7 +45,7 @@ resource.
 
 Note: This example uses the maplit crate to provide the `btreemap` macro and the log crate for the logging macros.
 
-```no_run,ignore
+```no_run
 # #[macro_use] extern crate log;
 # #[macro_use] extern crate maplit;
 # extern crate hyper;
@@ -57,15 +57,27 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
  use webmachine_rust::context::*;
  use webmachine_rust::headers::*;
  use serde_json::{Value, json};
+ use std::io::Read;
 
  # fn main() { }
+
+ fn from_hyper(req: &mut Request) -> http::Request<Vec<u8>> {
+  let mut request = http::Request::builder();
+  request.uri(req.uri.to_string()).method(req.method.as_ref());
+  for header in req.headers.iter() {
+    request.header(header.name(), header.value_string());
+  }
+  let mut buffer = Vec::new();
+  req.read_to_end(&mut buffer);
+  request.body(buffer.clone()).unwrap()
+ }
 
  struct ServerHandler {
  }
 
  impl Handler for ServerHandler {
 
-     fn handle(&self, req: Request, res: Response) {
+     fn handle(&self, mut req: Request, res: Response) {
          // setup the dispatcher, which maps paths to resources
          let dispatcher = WebmachineDispatcher::new(
              btreemap!{
@@ -90,7 +102,7 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
              }
          );
          // then dispatch the request to the web machine.
-         match dispatcher.dispatch(from_hyper(req)) {
+         match dispatcher.dispatch(from_hyper(&mut req)) {
              Ok(res) => (),
              Err(err) => warn!("Error generating response - {}", err)
          };
