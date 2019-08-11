@@ -17,7 +17,7 @@ pub struct WebmachineRequest {
     /// Request headers
     pub headers: HashMap<String, Vec<HeaderValue>>,
     /// Request body
-    pub body: Option<String>
+    pub body: Option<Vec<u8>>
 }
 
 impl WebmachineRequest {
@@ -153,7 +153,7 @@ pub struct WebmachineResponse {
     /// headers to return
     pub headers: BTreeMap<String, Vec<HeaderValue>>,
     /// Response Body
-    pub body: Option<String>
+    pub body: Option<Vec<u8>>
 }
 
 impl WebmachineResponse {

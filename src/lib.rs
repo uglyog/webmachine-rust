@@ -45,7 +45,7 @@ resource.
 
 Note: This example uses the maplit crate to provide the `btreemap` macro and the log crate for the logging macros.
 
-```no_run
+```no_run,ignore
 # #[macro_use] extern crate log;
 # #[macro_use] extern crate maplit;
 # extern crate hyper;
@@ -90,8 +90,8 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
              }
          );
          // then dispatch the request to the web machine.
-         match dispatcher.dispatch(req, res) {
-             Ok(_) => (),
+         match dispatcher.dispatch(from_hyper(req)) {
+             Ok(res) => (),
              Err(err) => warn!("Error generating response - {}", err)
          };
      }
@@ -118,24 +118,21 @@ For an example of a project using this crate, have a look at the [Pact Mock Serv
 
 #![warn(missing_docs)]
 
-extern crate hyper;
 #[macro_use] extern crate log;
 #[macro_use] extern crate maplit;
 extern crate itertools;
 #[macro_use] extern crate lazy_static;
 extern crate chrono;
+extern crate http;
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{Error, Read};
 use std::sync::Mutex;
 use std::sync::Arc;
-use hyper::uri::RequestUri;
-use hyper::status::StatusCode;
 use itertools::Itertools;
 use chrono::{DateTime, FixedOffset, UTC};
 use context::{WebmachineContext, WebmachineResponse, WebmachineRequest};
-use hyper::server::{Request, Response};
 use headers::HeaderValue;
+use http::{Request, Response};
 
 /// Simple macro to convert a string slice to a `String` struct.
 macro_rules! s {
@@ -311,14 +308,6 @@ impl WebmachineResource {
             expires: Box::new(|_| None),
             render_response: Box::new(|_| None)
         }
-    }
-}
-
-fn extract_path(uri: &RequestUri) -> String {
-    match uri {
-        &RequestUri::AbsolutePath(ref s) => s.splitn(2, "?").next().unwrap_or("/").to_string(),
-        &RequestUri::AbsoluteUri(ref url) => url.path().to_string(),
-        _ => uri.to_string()
     }
 }
 
@@ -781,43 +770,34 @@ fn update_paths_for_resource(request: &mut WebmachineRequest, base_path: &String
     }
 }
 
-fn parse_header_values(value: String) -> Vec<HeaderValue> {
-    if value.is_empty() {
-        Vec::new()
-    } else {
-        value.split(',').map(|s| HeaderValue::parse_string(s!(s.trim()))).collect()
-    }
+fn parse_header_values(value: &str) -> Vec<HeaderValue> {
+  if value.is_empty() {
+    Vec::new()
+  } else {
+    value.split(',').map(|s| HeaderValue::parse_string(s!(s.trim()))).collect()
+  }
 }
 
-fn headers_from_hyper_request(req: &Request) -> HashMap<String, Vec<HeaderValue>> {
-    req.headers.iter()
-        .map(|header| (s!(header.name()), parse_header_values(header.value_string())))
-        .collect()
+fn headers_from_http_request(req: &Request<Vec<u8>>) -> HashMap<String, Vec<HeaderValue>> {
+  req.headers().iter()
+    .map(|header| (s!(header.0.as_str()), parse_header_values(header.1.to_str().unwrap_or_default())))
+    .collect()
 }
 
-fn request_from_hyper_request(req: &mut Request) -> WebmachineRequest {
-    let request_path = extract_path(&req.uri);
-    let mut buffer = String::new();
-    let body = match req.read_to_string(&mut buffer) {
-        Ok(size) => {
-            if size > 0 {
-                Some(buffer.clone())
-            } else {
-                None
-            }
-        },
-        Err(err) => {
-            warn!("Failed to read the body of the request - {}", err);
-            None
-        }
-    };
-    WebmachineRequest {
-        request_path: request_path.clone(),
-        base_path: s!("/"),
-        method: s!(req.method.as_ref()),
-        headers: headers_from_hyper_request(req),
-        body: body
-    }
+fn request_from_http_request(req: &Request<Vec<u8>>) -> WebmachineRequest {
+  let request_path = req.uri().path().to_string();
+  let body = if req.body().is_empty() {
+    None
+  } else {
+    Some(req.body().clone())
+  };
+  WebmachineRequest {
+    request_path: request_path.clone(),
+    base_path: s!("/"),
+    method: req.method().as_str().into(),
+    headers: headers_from_http_request(req),
+    body
+  }
 }
 
 fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResource) {
@@ -883,7 +863,7 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
 
     if context.response.body.is_none() && context.response.status == 200 && context.request.is_get() {
         match resource.render_response.as_ref()(context) {
-            Some(body) => context.response.body = Some(body),
+            Some(body) => context.response.body = Some(body.into_bytes()),
             None => ()
         }
     }
@@ -896,17 +876,18 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
     debug!("Final response: {:?}", context.response);
 }
 
-fn generate_hyper_response(context: &WebmachineContext, mut res: Response) -> Result<(), Error> {
-    *res.status_mut() = StatusCode::from_u16(context.response.status);
-    for (header, values) in context.response.headers.clone() {
-        let header = header.clone();
-        let header_values = values.iter().map(|h| h.to_string()).join(", ").into_bytes();
-        res.headers_mut().set_raw(header, vec![header_values]);
-    }
-    match context.response.body.clone() {
-        Some(body) => res.send(body.as_bytes()),
-        None => res.start().unwrap().end()
-    }
+fn generate_http_response(context: &WebmachineContext) -> http::Result<Response<Vec<u8>>> {
+  let mut response = Response::builder();
+  response.status(context.response.status);
+
+  for (header, values) in context.response.headers.clone() {
+    let header_values = values.iter().map(|h| h.to_string()).join(", ");
+    response.header(&header, &header_values);
+  }
+  match context.response.body.clone() {
+    Some(body) => response.body(body),
+    None => response.body(vec![])
+  }
 }
 
 /// The main hyper dispatcher
@@ -923,21 +904,21 @@ impl WebmachineDispatcher {
         }
     }
 
-    /// Main hyper dispatch function for the Webmachine. This will look for a matching resource
+    /// Main dispatch function for the Webmachine. This will look for a matching resource
     /// based on the request path. If one is not found, a 404 Not Found response is returned
-    pub fn dispatch(&self, mut req: Request, res: Response) -> Result<(), Error> {
-        let mut context = self.context_from_hyper_request(&mut req);
-        self.dispatch_to_resource(&mut context);
-        generate_hyper_response(&context, res)
+    pub fn dispatch(&self, req: Request<Vec<u8>>) -> http::Result<Response<Vec<u8>>> {
+      let mut context = self.context_from_http_request(&req);
+      self.dispatch_to_resource(&mut context);
+      generate_http_response(&context)
     }
 
-    fn context_from_hyper_request(&self, req: &mut Request) -> WebmachineContext {
-        let request = request_from_hyper_request(req);
-        WebmachineContext {
-            request: request,
-            response: WebmachineResponse::default(),
-            .. WebmachineContext::default()
-        }
+    fn context_from_http_request(&self, req: &Request<Vec<u8>>) -> WebmachineContext {
+      let request = request_from_http_request(req);
+      WebmachineContext {
+        request,
+        response: WebmachineResponse::default(),
+        .. WebmachineContext::default()
+      }
     }
 
     fn match_paths(&self, request: &WebmachineRequest) -> Vec<String> {

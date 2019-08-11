@@ -3,7 +3,7 @@
 
 use itertools::Itertools;
 use std::cmp::Ordering;
-use headers::{self, HeaderValue};
+use headers::HeaderValue;
 use WebmachineResource;
 use context::WebmachineRequest;
 

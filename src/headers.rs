@@ -10,7 +10,7 @@ const SEPERATORS: [char; 10] = ['(', ')', '<', '>', '@', ',', ';', '=', '{', '}'
 const VALUE_SEPERATORS: [char; 9] = ['(', ')', '<', '>', '@', ',', ';', '{', '}'];
 
 fn batch(values: &[String]) -> Vec<(String, String)> {
-    values.into_iter().batching(|mut it| {
+    values.into_iter().batching(|it| {
         match it.next() {
            None => None,
            Some(x) => match it.next() {

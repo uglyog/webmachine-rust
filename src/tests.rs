@@ -246,17 +246,17 @@ fn execute_state_machine_returns_does_not_return_415_if_not_a_put_or_post() {
 
 #[test]
 fn parse_header_test() {
-    expect(parse_header_values(s!("")).iter()).to(be_empty());
-    expect(parse_header_values(s!("HEADER A"))).to(be_equal_to(vec![s!("HEADER A")]));
-    expect(parse_header_values(s!("HEADER A, header B")))
-        .to(be_equal_to(vec![s!("HEADER A"), s!("header B")]));
-    expect(parse_header_values(s!("text/plain;  q=0.5,   text/html,text/x-dvi; q=0.8, text/x-c")))
-        .to(be_equal_to(vec![
-            HeaderValue { value: s!("text/plain"), params: hashmap!{s!("q") => s!("0.5")}, quote: false },
-            HeaderValue { value: s!("text/html"), params: hashmap!{}, quote: false },
-            HeaderValue { value: s!("text/x-dvi"), params: hashmap!{s!("q") => s!("0.8")}, quote: false },
-            HeaderValue { value: s!("text/x-c"), params: hashmap!{}, quote: false }
-        ]));
+  expect(parse_header_values("").iter()).to(be_empty());
+  expect(parse_header_values("HEADER A")).to(be_equal_to(vec![s!("HEADER A")]));
+  expect(parse_header_values("HEADER A, header B"))
+    .to(be_equal_to(vec![s!("HEADER A"), s!("header B")]));
+  expect(parse_header_values("text/plain;  q=0.5,   text/html,text/x-dvi; q=0.8, text/x-c"))
+    .to(be_equal_to(vec![
+      HeaderValue { value: s!("text/plain"), params: hashmap!{s!("q") => s!("0.5")}, quote: false },
+      HeaderValue { value: s!("text/html"), params: hashmap!{}, quote: false },
+      HeaderValue { value: s!("text/x-dvi"), params: hashmap!{s!("q") => s!("0.8")}, quote: false },
+      HeaderValue { value: s!("text/x-c"), params: hashmap!{}, quote: false }
+    ]));
 }
 
 #[test]
@@ -1058,21 +1058,21 @@ fn execute_state_machine_returns_409_for_existing_resource_if_the_put_request_is
 
 #[test]
 fn execute_state_machine_returns_200_if_put_request_to_existing_resource() {
-    let mut context = WebmachineContext {
-        request: WebmachineRequest {
-            method: s!("PUT"),
-            .. WebmachineRequest::default()
-        },
-        .. WebmachineContext::default()
-    };
-    let resource = WebmachineResource {
-        allowed_methods: vec![s!("PUT")],
-        resource_exists: Box::new(|_| true),
-        process_put: Box::new(|context| { context.response.body = Some(s!("body")); Ok(true) }),
-        .. WebmachineResource::default()
-    };
-    execute_state_machine(&mut context, &resource);
-    expect(context.response.status).to(be_equal_to(200));
+  let mut context = WebmachineContext {
+    request: WebmachineRequest {
+      method: s!("PUT"),
+      .. WebmachineRequest::default()
+    },
+    .. WebmachineContext::default()
+  };
+  let resource = WebmachineResource {
+    allowed_methods: vec![s!("PUT")],
+    resource_exists: Box::new(|_| true),
+    process_put: Box::new(|context| { context.response.body = Some("body".as_bytes().to_vec()); Ok(true) }),
+    .. WebmachineResource::default()
+  };
+  execute_state_machine(&mut context, &resource);
+  expect(context.response.status).to(be_equal_to(200));
 }
 
 #[test]
@@ -1131,19 +1131,19 @@ fn execute_state_machine_returns_204_if_delete_was_enacted_and_response_has_no_b
 
 #[test]
 fn execute_state_machine_returns_200_if_delete_was_enacted_and_response_has_a_body() {
-    let mut context = WebmachineContext {
-        request: WebmachineRequest {
-            method: s!("DELETE"),
-            .. WebmachineRequest::default()
-        },
-        .. WebmachineContext::default()
-    };
-    let resource = WebmachineResource {
-        resource_exists: Box::new(|_| true),
-        delete_resource: Box::new(|context| { context.response.body = Some(s!("body")); Ok(true) }),
-        allowed_methods: vec![s!("DELETE")],
-        .. WebmachineResource::default()
-    };
-    execute_state_machine(&mut context, &resource);
-    expect(context.response.status).to(be_equal_to(200));
+  let mut context = WebmachineContext {
+    request: WebmachineRequest {
+      method: s!("DELETE"),
+      .. WebmachineRequest::default()
+    },
+    .. WebmachineContext::default()
+  };
+  let resource = WebmachineResource {
+    resource_exists: Box::new(|_| true),
+    delete_resource: Box::new(|context| { context.response.body = Some("body".as_bytes().to_vec()); Ok(true) }),
+    allowed_methods: vec![s!("DELETE")],
+    .. WebmachineResource::default()
+  };
+  execute_state_machine(&mut context, &resource);
+  expect(context.response.status).to(be_equal_to(200));
 }
