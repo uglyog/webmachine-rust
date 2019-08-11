@@ -50,13 +50,13 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
 # #[macro_use] extern crate maplit;
 # extern crate hyper;
 # extern crate webmachine_rust;
-# extern crate rustc_serialize;
+# extern crate serde_json;
  use std::sync::Arc;
  use hyper::server::{Handler, Server, Request, Response};
  use webmachine_rust::*;
  use webmachine_rust::context::*;
  use webmachine_rust::headers::*;
- use rustc_serialize::json::Json;
+ use serde_json::{Value, json};
 
  # fn main() { }
 
@@ -77,10 +77,9 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
                      resource_exists: Box::new(|context| true),
                      // callback to render the response for the resource
                      render_response: Box::new(|_| {
-                         let mut data = vec![Json::I64(1), Json::I64(2), Json::I64(3),
-                            Json::I64(4)];
-                         let json_response = Json::Object(btreemap!{
-                            "data".to_string() => Json::Array(data) });
+                         let json_response = json!({
+                            "data": [1, 2, 3, 4]
+                         });
                          Some(json_response.to_string())
                      }),
                      // callback to process the post for the resource
