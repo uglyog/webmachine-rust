@@ -15,13 +15,14 @@ use std::sync::Arc;
 use chrono::*;
 
 fn resource(path: &str) -> WebmachineRequest {
-    WebmachineRequest {
-        request_path: s!(path),
-        base_path: s!("/"),
-        method: s!("GET"),
-        headers: HashMap::new(),
-        body: None
-    }
+  WebmachineRequest {
+    request_path: s!(path),
+    base_path: s!("/"),
+    method: s!("GET"),
+    headers: HashMap::new(),
+    body: None,
+    query: HashMap::new()
+  }
 }
 
 #[test]
@@ -1146,4 +1147,49 @@ fn execute_state_machine_returns_200_if_delete_was_enacted_and_response_has_a_bo
   };
   execute_state_machine(&mut context, &resource);
   expect(context.response.status).to(be_equal_to(200));
+}
+
+#[test]
+fn parse_query_string_test() {
+  let query = "a=b&c=d".to_string();
+  let expected = hashmap!{
+    "a".to_string() => vec!["b".to_string()],
+    "c".to_string() => vec!["d".to_string()]
+  };
+  expect!(parse_query(&query)).to(be_equal_to(expected));
+}
+
+#[test]
+fn parse_query_string_handles_empty_string() {
+  let query = "".to_string();
+  expect!(parse_query(&query)).to(be_equal_to(hashmap!{}));
+}
+
+#[test]
+fn parse_query_string_handles_missing_values() {
+  let query = "a=&c=d".to_string();
+  let expected = hashmap!{
+    "a".to_string() => vec!["".to_string()],
+    "c".to_string() => vec!["d".to_string()]
+  };
+  expect!(parse_query(&query)).to(be_equal_to(expected));
+}
+
+#[test]
+fn parse_query_string_handles_equals_in_values() {
+  let query = "a=b&c=d=e=f".to_string();
+  let expected = hashmap!{
+    "a".to_string() => vec!["b".to_string()],
+    "c".to_string() => vec!["d=e=f".to_string()]
+  };
+  expect!(parse_query(&query)).to(be_equal_to(expected));
+}
+
+#[test]
+fn parse_query_string_decodes_values() {
+  let query = "a=a%20b%20c".to_string();
+  let expected = hashmap!{
+    "a".to_string() => vec!["a b c".to_string()]
+  };
+  expect!(parse_query(&query)).to(be_equal_to(expected));
 }

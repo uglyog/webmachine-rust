@@ -344,7 +344,7 @@ fn join_paths(base: &Vec<String>, path: &Vec<String>) -> String {
     }
 }
 
-const MAX_STATE_MACHINE_TRANSISIONS: u8 = 100;
+const MAX_STATE_MACHINE_TRANSITIONS: u8 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Decision {
@@ -716,7 +716,7 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
     let mut loop_count = 0;
     while !state.is_terminal() {
         loop_count += 1;
-        if loop_count >= MAX_STATE_MACHINE_TRANSISIONS {
+        if loop_count >= MAX_STATE_MACHINE_TRANSITIONS {
             panic!("State machine has not terminated within {} transitions!", loop_count);
         }
         debug!("state is {:?}", state);
@@ -797,6 +797,76 @@ fn headers_from_http_request(req: &Request<Vec<u8>>) -> HashMap<String, Vec<Head
     .collect()
 }
 
+fn decode_query(query: &str) -> String {
+  let mut chars = query.chars();
+  let mut ch = chars.next();
+  let mut result = String::new();
+
+  while ch.is_some() {
+    let c = ch.unwrap();
+    if c == '%' {
+      let c1 = chars.next();
+      let c2 = chars.next();
+      match (c1, c2) {
+        (Some(v1), Some(v2)) => {
+          let mut s = String::new();
+          s.push(v1);
+          s.push(v2);
+          let decoded: Result<Vec<u8>, _> = hex::decode(s);
+          match decoded {
+            Ok(n) => result.push(n[0] as char),
+            Err(_) => {
+              result.push('%');
+              result.push(v1);
+              result.push(v2);
+            }
+          }
+        },
+        (Some(v1), None) => {
+          result.push('%');
+          result.push(v1);
+        },
+        _ => result.push('%')
+      }
+    } else if c == '+' {
+      result.push(' ');
+    } else {
+      result.push(c);
+    }
+
+    ch = chars.next();
+  }
+
+  result
+}
+
+fn parse_query(query: &str) -> HashMap<String, Vec<String>> {
+  if !query.is_empty() {
+    query.split("&").map(|kv| {
+      if kv.is_empty() {
+        vec![]
+      } else if kv.contains("=") {
+        kv.splitn(2, "=").collect::<Vec<&str>>()
+      } else {
+        vec![kv]
+      }
+    }).fold(HashMap::new(), |mut map, name_value| {
+      if !name_value.is_empty() {
+        let name = decode_query(name_value[0]);
+        let value = if name_value.len() > 1 {
+          decode_query(name_value[1])
+        } else {
+          String::new()
+        };
+        map.entry(name).or_insert(vec![]).push(value);
+      }
+      map
+    })
+  } else {
+    HashMap::new()
+  }
+}
+
 fn request_from_http_request(req: &Request<Vec<u8>>) -> WebmachineRequest {
   let request_path = req.uri().path().to_string();
   let body = if req.body().is_empty() {
@@ -804,12 +874,17 @@ fn request_from_http_request(req: &Request<Vec<u8>>) -> WebmachineRequest {
   } else {
     Some(req.body().clone())
   };
+  let query = match req.uri().query() {
+    Some(query) => parse_query(query),
+    None => HashMap::new()
+  };
   WebmachineRequest {
     request_path: request_path.clone(),
     base_path: s!("/"),
     method: req.method().as_str().into(),
     headers: headers_from_http_request(req),
-    body
+    body,
+    query
   }
 }
 

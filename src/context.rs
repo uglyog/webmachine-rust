@@ -8,30 +8,35 @@ use chrono::{DateTime, FixedOffset};
 /// Request that the state machine is executing against
 #[derive(Debug, Clone, PartialEq)]
 pub struct WebmachineRequest {
-    /// Path of the request relative to the resource
-    pub request_path: String,
-    /// Resource base path
-    pub base_path: String,
-    /// Request method
-    pub method: String,
-    /// Request headers
-    pub headers: HashMap<String, Vec<HeaderValue>>,
-    /// Request body
-    pub body: Option<Vec<u8>>
+  /// Path of the request relative to the resource
+  pub request_path: String,
+  /// Resource base path
+  pub base_path: String,
+  /// Request method
+  pub method: String,
+  /// Request headers
+  pub headers: HashMap<String, Vec<HeaderValue>>,
+  /// Request body
+  pub body: Option<Vec<u8>>,
+  /// Query parameters
+  pub query: HashMap<String, Vec<String>>
+}
+
+impl Default for WebmachineRequest {
+  /// Creates a default request (GET /)
+  fn default() -> WebmachineRequest {
+    WebmachineRequest {
+      request_path: s!("/"),
+      base_path: s!("/"),
+      method: s!("GET"),
+      headers: HashMap::new(),
+      body: None,
+      query: HashMap::new()
+    }
+  }
 }
 
 impl WebmachineRequest {
-    /// Creates a default request (GET /)
-    pub fn default() -> WebmachineRequest {
-        WebmachineRequest {
-            request_path: s!("/"),
-            base_path: s!("/"),
-            method: s!("GET"),
-            headers: HashMap::new(),
-            body: None
-        }
-    }
-
     /// returns the content type of the request, based on the content type header. Defaults to
     /// 'application/json' if there is no header.
     pub fn content_type(&self) -> String {
@@ -236,23 +241,23 @@ pub struct WebmachineContext {
     pub metadata: HashMap<String, String>
 }
 
-impl WebmachineContext {
-    /// Creates a default context
-    pub fn default() -> WebmachineContext {
-        WebmachineContext {
-            request: WebmachineRequest::default(),
-            response: WebmachineResponse::default(),
-            selected_media_type: None,
-            selected_language: None,
-            selected_charset: None,
-            selected_encoding: None,
-            if_unmodified_since: None,
-            if_modified_since: None,
-            redirect: false,
-            new_resource: false,
-            metadata: HashMap::new()
-        }
+impl Default for WebmachineContext {
+  /// Creates a default context
+  fn default() -> WebmachineContext {
+    WebmachineContext {
+      request: WebmachineRequest::default(),
+      response: WebmachineResponse::default(),
+      selected_media_type: None,
+      selected_language: None,
+      selected_charset: None,
+      selected_encoding: None,
+      if_unmodified_since: None,
+      if_modified_since: None,
+      redirect: false,
+      new_resource: false,
+      metadata: HashMap::new()
     }
+  }
 }
 
 #[cfg(test)]
