@@ -106,7 +106,6 @@ ask("Bump version to $nextVer?: [Y]") {
   executeOnShell "sed -i -e 's/documentation = \"https:\\/\\/docs\\.rs\\/webmachine-rust\\/${releaseVer}\\/webmachine-rust\\/\"/documentation = \"https:\\/\\/docs\\.rs\\/webmachine-rust\\/${nextVer}\\/webmachine-rust\\/\"/' Cargo.toml"
   executeOnShell("cargo update")
   executeOnShell("git add Cargo.toml")
-  executeOnShell("git add Cargo.lock")
   executeOnShell("git diff --cached")
   ask("Commit and push this change?: [Y]") {
     executeOnShell("git commit -m 'bump version to $nextVer'")
