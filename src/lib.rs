@@ -157,170 +157,170 @@ pub mod content_negotiation;
 
 /// Struct to represent a resource in webmachine
 pub struct WebmachineResource {
-    /// This is called just before the final response is constructed and sent. It allows the resource
-    /// an opportunity to modify the response after the webmachine has executed.
-    pub finalise_response: Option<Box<Fn(&mut WebmachineContext)>>,
-    /// This is invoked to render the response for the resource
-    pub render_response: Box<Fn(&mut WebmachineContext) -> Option<String>>,
-    /// Is the resource available? Returning false will result in a '503 Service Not Available'
-    /// response. Defaults to true. If the resource is only temporarily not available,
-    /// add a 'Retry-After' response header.
-    pub available: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// HTTP methods that are known to the resource. Default includes all standard HTTP methods.
-    /// One could override this to allow additional methods
-    pub known_methods: Vec<String>,
-    /// If the URI is too long to be processed, this should return true, which will result in a
-    // '414 Request URI Too Long' response. Defaults to false.
-    pub uri_too_long: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// HTTP methods that are allowed on this resource. Defaults to GET','HEAD and 'OPTIONS'.
-    pub allowed_methods: Vec<String>,
-    /// If the request is malformed, this should return true, which will result in a
-    /// '400 Malformed Request' response. Defaults to false.
-    pub malformed_request: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// Is the client or request not authorized? Returning a Some<String>
-    /// will result in a '401 Unauthorized' response.  Defaults to None. If a Some(String) is
-    /// returned, the string will be used as the value in the WWW-Authenticate header.
-    pub not_authorized: Box<Fn(&mut WebmachineContext) -> Option<String>>,
-    /// Is the request or client forbidden? Returning true will result in a '403 Forbidden' response.
-    /// Defaults to false.
-    pub forbidden: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// If the request includes any invalid Content-* headers, this should return true, which will
-    /// result in a '501 Not Implemented' response. Defaults to false.
-    pub unsupported_content_headers: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// The list of acceptable content types. Defaults to 'application/json'. If the content type
-    /// of the request is not in this list, a '415 Unsupported Media Type' response is returned.
-    pub acceptable_content_types: Vec<String>,
-    /// If the entity length on PUT or POST is invalid, this should return false, which will result
-    /// in a '413 Request Entity Too Large' response. Defaults to true.
-    pub valid_entity_length: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// This is called just before the final response is constructed and sent. This allows the
-    /// response to be modified. The default implementation adds CORS headers to the response
-    pub finish_request: Box<Fn(&mut WebmachineContext, &WebmachineResource)>,
-    /// If the OPTIONS method is supported and is used, this return a HashMap of headers that
-    // should appear in the response. Defaults to CORS headers.
-    pub options: Box<Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>,
-    /// The list of content types that this resource produces. Defaults to 'application/json'. If
-    /// more than one is provided, and the client does not supply an Accept header, the first one
-    /// will be selected.
-    pub produces: Vec<String>,
-    /// The list of content languages that this resource provides. Defaults to an empty list,
-    /// which represents all languages. If more than one is provided, and the client does not
-    /// supply an Accept-Language header, the first one will be selected.
-    pub languages_provided: Vec<String>,
-    /// The list of charsets that this resource provides. Defaults to an empty list,
-    /// which represents all charsets with ISO-8859-1 as the default. If more than one is provided,
-    /// and the client does not supply an Accept-Charset header, the first one will be selected.
-    pub charsets_provided: Vec<String>,
-    /// The list of encodings your resource wants to provide. The encoding will be applied to the
-    /// response body automatically by Webmachine. Default includes only the 'identity' encoding.
-    pub encodings_provided: Vec<String>,
-    /// The list of header names that should be included in the response's Vary header. The standard
-    /// content negotiation headers (Accept, Accept-Encoding, Accept-Charset, Accept-Language) do
-    /// not need to be specified here as Webmachine will add the correct elements of those
-    /// automatically depending on resource behavior. Default is an empty list.
-    pub variances: Vec<String>,
-    /// Does the resource exist? Returning a false value will result in a '404 Not Found' response
-    /// unless it is a PUT or POST. Defaults to true.
-    pub resource_exists: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// If this resource is known to have existed previously, this should return true. Default is false.
-    pub previously_existed: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// If this resource has moved to a new location permanently, this should return the new
-    /// location as a String. Default is to return None
-    pub moved_permanently: Box<Fn(&mut WebmachineContext) -> Option<String>>,
-    /// If this resource has moved to a new location temporarily, this should return the new
-    /// location as a String. Default is to return None
-    pub moved_temporarily: Box<Fn(&mut WebmachineContext) -> Option<String>>,
-    /// If this returns true, the client will receive a '409 Conflict' response. This is only
-    /// called for PUT requests. Default is false.
-    pub is_conflict: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// Return true if the resource accepts POST requests to nonexistent resources. Defaults to false.
-    pub allow_missing_post: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// If this returns a value, it will be used as the value of the ETag header and for
-    /// comparison in conditional requests. Default is None.
-    pub generate_etag: Box<Fn(&mut WebmachineContext) -> Option<String>>,
-    /// Returns the last modified date and time of the resource which will be added as the
-    /// Last-Modified header in the response and used in negotiating conditional requests.
-    /// Default is None
-    pub last_modified: Box<Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>,
-    /// Called when a DELETE request should be enacted. Return `Ok(true)` if the deletion succeeded,
-    /// and `Ok(false)` if the deletion was accepted but cannot yet be guaranteed to have finished.
-    /// If the delete fails for any reason, return an Err with the status code you wish returned
-    /// (a 500 status makes sense).
-    /// Defaults to `Ok(true)`.
-    pub delete_resource: Box<Fn(&mut WebmachineContext) -> Result<bool, u16>>,
-    /// If POST requests should be treated as a request to put content into a (potentially new)
-    /// resource as opposed to a generic submission for processing, then this should return true.
-    /// If it does return true, then `create_path` will be called and the rest of the request will
-    /// be treated much like a PUT to the path returned by that call. Default is false.
-    pub post_is_create: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// If `post_is_create` returns false, then this will be called to process any POST request.
-    /// If it succeeds, return `Ok(true)`, `Ok(false)` otherwise. If it fails for any reason,
-    /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
-    /// Default is false. If you want the result of processing the POST to be a redirect, set
-    /// `context.redirect` to true.
-    pub process_post: Box<Fn(&mut WebmachineContext) -> Result<bool, u16>>,
-    /// This will be called on a POST request if `post_is_create` returns true. It should create
-    /// the new resource and return the path as a valid URI part following the dispatcher prefix.
-    /// That path will replace the previous one in the return value of `WebmachineRequest.request_path`
-    /// for all subsequent resource function calls in the course of this request and will be set
-    /// as the value of the Location header of the response. If it fails for any reason,
-    /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
-    /// Default will return an `Ok(WebmachineRequest.request_path)`. If you want the result of
-    /// processing the POST to be a redirect, set `context.redirect` to true.
-    pub create_path: Box<Fn(&mut WebmachineContext) -> Result<String, u16>>,
-    /// This will be called to process any PUT request. If it succeeds, return `Ok(true)`,
-    /// `Ok(false)` otherwise. If it fails for any reason, return an Err with the status code
-    /// you wish returned (e.g., a 500 status makes sense). Default is `Ok(true)`
-    pub process_put: Box<Fn(&mut WebmachineContext) -> Result<bool, u16>>,
-    /// If this returns true, then it is assumed that multiple representations of the response are
-    /// possible and a single one cannot be automatically chosen, so a 300 Multiple Choices will
-    /// be sent instead of a 200. Default is false.
-    pub multiple_choices: Box<Fn(&mut WebmachineContext) -> bool>,
-    /// If the resource expires, this should return the date/time it expires. Default is None.
-    pub expires: Box<Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>
+  /// This is called just before the final response is constructed and sent. It allows the resource
+  /// an opportunity to modify the response after the webmachine has executed.
+  pub finalise_response: Option<Box<dyn Fn(&mut WebmachineContext)>>,
+  /// This is invoked to render the response for the resource
+  pub render_response: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  /// Is the resource available? Returning false will result in a '503 Service Not Available'
+  /// response. Defaults to true. If the resource is only temporarily not available,
+  /// add a 'Retry-After' response header.
+  pub available: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// HTTP methods that are known to the resource. Default includes all standard HTTP methods.
+  /// One could override this to allow additional methods
+  pub known_methods: Vec<String>,
+  /// If the URI is too long to be processed, this should return true, which will result in a
+  // '414 Request URI Too Long' response. Defaults to false.
+  pub uri_too_long: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// HTTP methods that are allowed on this resource. Defaults to GET','HEAD and 'OPTIONS'.
+  pub allowed_methods: Vec<String>,
+  /// If the request is malformed, this should return true, which will result in a
+  /// '400 Malformed Request' response. Defaults to false.
+  pub malformed_request: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// Is the client or request not authorized? Returning a Some<String>
+  /// will result in a '401 Unauthorized' response.  Defaults to None. If a Some(String) is
+  /// returned, the string will be used as the value in the WWW-Authenticate header.
+  pub not_authorized: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  /// Is the request or client forbidden? Returning true will result in a '403 Forbidden' response.
+  /// Defaults to false.
+  pub forbidden: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// If the request includes any invalid Content-* headers, this should return true, which will
+  /// result in a '501 Not Implemented' response. Defaults to false.
+  pub unsupported_content_headers: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// The list of acceptable content types. Defaults to 'application/json'. If the content type
+  /// of the request is not in this list, a '415 Unsupported Media Type' response is returned.
+  pub acceptable_content_types: Vec<String>,
+  /// If the entity length on PUT or POST is invalid, this should return false, which will result
+  /// in a '413 Request Entity Too Large' response. Defaults to true.
+  pub valid_entity_length: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// This is called just before the final response is constructed and sent. This allows the
+  /// response to be modified. The default implementation adds CORS headers to the response
+  pub finish_request: Box<dyn Fn(&mut WebmachineContext, &WebmachineResource)>,
+  /// If the OPTIONS method is supported and is used, this return a HashMap of headers that
+  // should appear in the response. Defaults to CORS headers.
+  pub options: Box<dyn Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>,
+  /// The list of content types that this resource produces. Defaults to 'application/json'. If
+  /// more than one is provided, and the client does not supply an Accept header, the first one
+  /// will be selected.
+  pub produces: Vec<String>,
+  /// The list of content languages that this resource provides. Defaults to an empty list,
+  /// which represents all languages. If more than one is provided, and the client does not
+  /// supply an Accept-Language header, the first one will be selected.
+  pub languages_provided: Vec<String>,
+  /// The list of charsets that this resource provides. Defaults to an empty list,
+  /// which represents all charsets with ISO-8859-1 as the default. If more than one is provided,
+  /// and the client does not supply an Accept-Charset header, the first one will be selected.
+  pub charsets_provided: Vec<String>,
+  /// The list of encodings your resource wants to provide. The encoding will be applied to the
+  /// response body automatically by Webmachine. Default includes only the 'identity' encoding.
+  pub encodings_provided: Vec<String>,
+  /// The list of header names that should be included in the response's Vary header. The standard
+  /// content negotiation headers (Accept, Accept-Encoding, Accept-Charset, Accept-Language) do
+  /// not need to be specified here as Webmachine will add the correct elements of those
+  /// automatically depending on resource behavior. Default is an empty list.
+  pub variances: Vec<String>,
+  /// Does the resource exist? Returning a false value will result in a '404 Not Found' response
+  /// unless it is a PUT or POST. Defaults to true.
+  pub resource_exists: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// If this resource is known to have existed previously, this should return true. Default is false.
+  pub previously_existed: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// If this resource has moved to a new location permanently, this should return the new
+  /// location as a String. Default is to return None
+  pub moved_permanently: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  /// If this resource has moved to a new location temporarily, this should return the new
+  /// location as a String. Default is to return None
+  pub moved_temporarily: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  /// If this returns true, the client will receive a '409 Conflict' response. This is only
+  /// called for PUT requests. Default is false.
+  pub is_conflict: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// Return true if the resource accepts POST requests to nonexistent resources. Defaults to false.
+  pub allow_missing_post: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// If this returns a value, it will be used as the value of the ETag header and for
+  /// comparison in conditional requests. Default is None.
+  pub generate_etag: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  /// Returns the last modified date and time of the resource which will be added as the
+  /// Last-Modified header in the response and used in negotiating conditional requests.
+  /// Default is None
+  pub last_modified: Box<dyn Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>,
+  /// Called when a DELETE request should be enacted. Return `Ok(true)` if the deletion succeeded,
+  /// and `Ok(false)` if the deletion was accepted but cannot yet be guaranteed to have finished.
+  /// If the delete fails for any reason, return an Err with the status code you wish returned
+  /// (a 500 status makes sense).
+  /// Defaults to `Ok(true)`.
+  pub delete_resource: Box<dyn Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+  /// If POST requests should be treated as a request to put content into a (potentially new)
+  /// resource as opposed to a generic submission for processing, then this should return true.
+  /// If it does return true, then `create_path` will be called and the rest of the request will
+  /// be treated much like a PUT to the path returned by that call. Default is false.
+  pub post_is_create: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// If `post_is_create` returns false, then this will be called to process any POST request.
+  /// If it succeeds, return `Ok(true)`, `Ok(false)` otherwise. If it fails for any reason,
+  /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
+  /// Default is false. If you want the result of processing the POST to be a redirect, set
+  /// `context.redirect` to true.
+  pub process_post: Box<dyn Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+  /// This will be called on a POST request if `post_is_create` returns true. It should create
+  /// the new resource and return the path as a valid URI part following the dispatcher prefix.
+  /// That path will replace the previous one in the return value of `WebmachineRequest.request_path`
+  /// for all subsequent resource function calls in the course of this request and will be set
+  /// as the value of the Location header of the response. If it fails for any reason,
+  /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
+  /// Default will return an `Ok(WebmachineRequest.request_path)`. If you want the result of
+  /// processing the POST to be a redirect, set `context.redirect` to true.
+  pub create_path: Box<dyn Fn(&mut WebmachineContext) -> Result<String, u16>>,
+  /// This will be called to process any PUT request. If it succeeds, return `Ok(true)`,
+  /// `Ok(false)` otherwise. If it fails for any reason, return an Err with the status code
+  /// you wish returned (e.g., a 500 status makes sense). Default is `Ok(true)`
+  pub process_put: Box<dyn Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+  /// If this returns true, then it is assumed that multiple representations of the response are
+  /// possible and a single one cannot be automatically chosen, so a 300 Multiple Choices will
+  /// be sent instead of a 200. Default is false.
+  pub multiple_choices: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// If the resource expires, this should return the date/time it expires. Default is None.
+  pub expires: Box<dyn Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>
 }
 
-impl WebmachineResource {
-    /// Creates a default webmachine resource
-    pub fn default() -> WebmachineResource {
-        WebmachineResource {
-            finalise_response: None,
-            available: Box::new(|_| true),
-            known_methods: vec![s!("OPTIONS"), s!("GET"), s!("POST"), s!("PUT"), s!("DELETE"),
-                s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")],
-            uri_too_long: Box::new(|_| false),
-            allowed_methods: vec![s!("OPTIONS"), s!("GET"), s!("HEAD")],
-            malformed_request: Box::new(|_| false),
-            not_authorized: Box::new(|_| None),
-            forbidden: Box::new(|_| false),
-            unsupported_content_headers: Box::new(|_| false),
-            acceptable_content_types: vec![s!("application/json")],
-            valid_entity_length: Box::new(|_| true),
-            finish_request: Box::new(|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
-            options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
-            produces: vec![s!("application/json")],
-            languages_provided: Vec::new(),
-            charsets_provided: Vec::new(),
-            encodings_provided: vec![s!("identity")],
-            variances: Vec::new(),
-            resource_exists: Box::new(|_| true),
-            previously_existed: Box::new(|_| false),
-            moved_permanently: Box::new(|_| None),
-            moved_temporarily: Box::new(|_| None),
-            is_conflict: Box::new(|_| false),
-            allow_missing_post: Box::new(|_| false),
-            generate_etag: Box::new(|_| None),
-            last_modified: Box::new(|_| None),
-            delete_resource: Box::new(|_| Ok(true)),
-            post_is_create: Box::new(|_| false),
-            process_post: Box::new(|_| Ok(false)),
-            process_put: Box::new(|_| Ok(true)),
-            multiple_choices: Box::new(|_| false),
-            create_path: Box::new(|context| Ok(context.request.request_path.clone())),
-            expires: Box::new(|_| None),
-            render_response: Box::new(|_| None)
-        }
+impl Default for WebmachineResource {
+  /// Creates a default webmachine resource
+  fn default() -> WebmachineResource {
+    WebmachineResource {
+      finalise_response: None,
+      available: Box::new(|_| true),
+      known_methods: vec![s!("OPTIONS"), s!("GET"), s!("POST"), s!("PUT"), s!("DELETE"),
+                          s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")],
+      uri_too_long: Box::new(|_| false),
+      allowed_methods: vec![s!("OPTIONS"), s!("GET"), s!("HEAD")],
+      malformed_request: Box::new(|_| false),
+      not_authorized: Box::new(|_| None),
+      forbidden: Box::new(|_| false),
+      unsupported_content_headers: Box::new(|_| false),
+      acceptable_content_types: vec![s!("application/json")],
+      valid_entity_length: Box::new(|_| true),
+      finish_request: Box::new(|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
+      options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
+      produces: vec![s!("application/json")],
+      languages_provided: Vec::new(),
+      charsets_provided: Vec::new(),
+      encodings_provided: vec![s!("identity")],
+      variances: Vec::new(),
+      resource_exists: Box::new(|_| true),
+      previously_existed: Box::new(|_| false),
+      moved_permanently: Box::new(|_| None),
+      moved_temporarily: Box::new(|_| None),
+      is_conflict: Box::new(|_| false),
+      allow_missing_post: Box::new(|_| false),
+      generate_etag: Box::new(|_| None),
+      last_modified: Box::new(|_| None),
+      delete_resource: Box::new(|_| Ok(true)),
+      post_is_create: Box::new(|_| false),
+      process_post: Box::new(|_| Ok(false)),
+      process_put: Box::new(|_| Ok(true)),
+      multiple_choices: Box::new(|_| false),
+      create_path: Box::new(|context| Ok(context.request.request_path.clone())),
+      expires: Box::new(|_| None),
+      render_response: Box::new(|_| None)
     }
+  }
 }
 
 fn sanitise_path(path: &String) -> Vec<String> {

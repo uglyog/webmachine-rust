@@ -3,9 +3,9 @@
 
 use itertools::Itertools;
 use std::cmp::Ordering;
-use headers::HeaderValue;
-use WebmachineResource;
-use context::WebmachineRequest;
+use crate::headers::HeaderValue;
+use crate::context::WebmachineRequest;
+use crate::WebmachineResource;
 
 /// Enum to represent a match with media types
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

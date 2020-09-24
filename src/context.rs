@@ -2,7 +2,7 @@
 //! executing in. Basically wraps the request and response.
 
 use std::collections::{HashMap, BTreeMap};
-use headers::HeaderValue;
+use crate::headers::HeaderValue;
 use chrono::{DateTime, FixedOffset};
 
 /// Request that the state machine is executing against
@@ -257,9 +257,9 @@ impl WebmachineContext {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use headers::*;
-    use expectest::prelude::*;
+  use super::*;
+  use crate::headers::*;
+  use expectest::prelude::*;
 
     #[test]
     fn request_does_not_have_header_test() {
