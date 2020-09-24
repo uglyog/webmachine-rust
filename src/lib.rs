@@ -62,10 +62,11 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
  # fn main() { }
 
  fn from_hyper(req: &mut Request) -> http::Request<Vec<u8>> {
-  let mut request = http::Request::builder();
-  request.uri(req.uri.to_string()).method(req.method.as_ref());
+  let mut request = http::Request::builder()
+    .uri(req.uri.to_string())
+    .method(req.method.as_ref());
   for header in req.headers.iter() {
-    request.header(header.name(), header.value_string());
+    request = request.header(header.name(), header.value_string());
   }
   let mut buffer = Vec::new();
   req.read_to_end(&mut buffer);
@@ -141,7 +142,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::sync::Arc;
 use itertools::Itertools;
-use chrono::{DateTime, FixedOffset, UTC};
+use chrono::{DateTime, FixedOffset, Utc};
 use context::{WebmachineContext, WebmachineResponse, WebmachineRequest};
 use headers::HeaderValue;
 use http::{Request, Response};
@@ -645,7 +646,7 @@ fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resour
         &Decision::L15IfModifiedSinceGreaterThanNow => {
             let datetime = context.if_modified_since.unwrap();
             let timezone = datetime.timezone();
-            DecisionResult::wrap(datetime > UTC::now().with_timezone(&timezone))
+            DecisionResult::wrap(datetime > Utc::now().with_timezone(&timezone))
         },
         &Decision::L17IfLastModifiedGreaterThanMS => {
             match resource.last_modified.as_ref()(context) {
@@ -889,12 +890,11 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
 }
 
 fn generate_http_response(context: &WebmachineContext) -> http::Result<Response<Vec<u8>>> {
-  let mut response = Response::builder();
-  response.status(context.response.status);
+  let mut response = Response::builder().status(context.response.status);
 
   for (header, values) in context.response.headers.clone() {
     let header_values = values.iter().map(|h| h.to_string()).join(", ");
-    response.header(&header, &header_values);
+    response = response.header(&header, &header_values);
   }
   match context.response.body.clone() {
     Some(body) => response.body(body),
@@ -967,10 +967,6 @@ impl WebmachineDispatcher {
         };
     }
 }
-
-#[cfg(test)]
-#[macro_use(expect)]
-extern crate expectest;
 
 #[cfg(test)]
 mod tests;
