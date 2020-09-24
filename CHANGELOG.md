@@ -1,5 +1,20 @@
 # 0.0.0 - Initial Version
 
+# 0.1.0 - Update to Rust 2018 + updated crates + handle query parameters
+
+* 4bc1048 - feat: query parameter support was missing (Ronald Holshausen, Thu Sep 24 11:58:13 2020 +1000)
+* 1a4efc6 - chore: update crates to latest (Ronald Holshausen, Thu Sep 24 11:23:34 2020 +1000)
+* 9dd4ae8 - chore: upgrade to Rust 2018 (Ronald Holshausen, Thu Sep 24 11:14:04 2020 +1000)
+* 57e6daf - fixed: doc test (Ronald Holshausen, Sun Aug 11 17:44:26 2019 +1000)
+* 001a67d - chore: drop hyper and use http crate (Ronald Holshausen, Sun Aug 11 17:16:59 2019 +1000)
+* 1a4cba8 - chore: bump version (Ronald Holshausen, Sun Aug 11 16:15:35 2019 +1000)
+* 52a7914 - chore: cleanup imports (Ronald Holshausen, Sun Aug 11 16:14:48 2019 +1000)
+* dc5139b - fix: replace ristc_serialize with serde (Ronald Holshausen, Sun Aug 11 16:03:27 2019 +1000)
+* 0204219 - chore: upgrade crates (Ronald Holshausen, Sun Aug 11 15:53:56 2019 +1000)
+* a907fd9 - Revert "Upgraded hyper to 0.11 and started converting Webmachine to a trait + future based implementation" (Ronald Holshausen, Sun Aug 11 15:41:47 2019 +1000)
+* f23dc71 - chore: added changelog and release script (Ronald Holshausen, Sun Aug 11 15:24:29 2019 +1000)
+* 9c21687 - Upgraded hyper to 0.11 and started converting Webmachine to a trait + future based implementation (Ronald Holshausen, Sat Nov 4 12:33:47 2017 +1100)
+
 * ed8ee7c - add build status badge back to readme (Ronald Holshausen, Sun Jun 26 13:07:41 2016 +1000)
 * b74e643 - update cargo manifest with doc and repo urls (Ronald Holshausen, Sun Jun 26 13:05:40 2016 +1000)
 * 1d82a32 - reformat the doc examples (Ronald Holshausen, Sun Jun 26 12:52:38 2016 +1000)
