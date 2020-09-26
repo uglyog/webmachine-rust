@@ -69,16 +69,16 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
           // Methods allowed on this resource
           allowed_methods: vec!["OPTIONS", "GET", "HEAD", "POST"],
           // if the resource exists callback
-          resource_exists: callback(&|context| true),
+          resource_exists: callback(&|_, _| true),
           // callback to render the response for the resource
-          render_response: callback(&|_| {
+          render_response: callback(&|_, _| {
               let json_response = json!({
                  "data": [1, 2, 3, 4]
               });
               Some(json_response.to_string())
           }),
           // callback to process the post for the resource
-          process_post: callback(&|context|  /* Handle the post here */ Ok(true) ),
+          process_post: callback(&|_, _|  /* Handle the post here */ Ok(true) ),
           // default everything else
           .. WebmachineResource::default()
         }
@@ -142,18 +142,10 @@ pub mod context;
 pub mod content_negotiation;
 
 /// Type of a Webmachine resource callback
-pub type WebmachineCallback<'a, T> = Arc<Mutex<Box<dyn Fn(&mut WebmachineContext) -> T + Send + Sync + 'a>>>;
-/// Type of a Webmachine resource callback with 2 parameters
-pub type WebmachineCallback2<'a, T> = Arc<Mutex<Box<dyn Fn(&mut WebmachineContext, &WebmachineResource) -> T + Send + Sync + 'a>>>;
+pub type WebmachineCallback<'a, T> = Arc<Mutex<Box<dyn Fn(&mut WebmachineContext, &WebmachineResource) -> T + Send + Sync + 'a>>>;
 
 /// Wrap a callback in a structure that is safe to call between threads
 pub fn callback<T, RT>(cb: &T) -> WebmachineCallback<RT>
-  where T: Fn(&mut WebmachineContext) -> RT + Send + Sync {
-  Arc::new(Mutex::new(Box::new(cb)))
-}
-
-/// Wrap a callback with 2 parameters in a structure that is safe to call between threads
-pub fn callback2<T, RT>(cb: &T) -> WebmachineCallback2<RT>
   where T: Fn(&mut WebmachineContext, &WebmachineResource) -> RT + Send + Sync {
   Arc::new(Mutex::new(Box::new(cb)))
 }
@@ -199,10 +191,10 @@ pub struct WebmachineResource<'a> {
   pub valid_entity_length: WebmachineCallback<'a, bool>,
   /// This is called just before the final response is constructed and sent. This allows the
   /// response to be modified. The default implementation adds CORS headers to the response
-  pub finish_request: WebmachineCallback2<'a, ()>,
+  pub finish_request: WebmachineCallback<'a, ()>,
   /// If the OPTIONS method is supported and is used, this returns a HashMap of headers that
   /// should appear in the response. Defaults to CORS headers.
-  pub options: WebmachineCallback2<'a, Option<HashMap<String, Vec<String>>>>,
+  pub options: WebmachineCallback<'a, Option<HashMap<String, Vec<String>>>>,
   /// The list of content types that this resource produces. Defaults to 'application/json'. If
   /// more than one is provided, and the client does not supply an Accept header, the first one
   /// will be selected.
@@ -289,39 +281,39 @@ impl <'a> Default for WebmachineResource<'a> {
   fn default() -> WebmachineResource<'a> {
     WebmachineResource {
       finalise_response: None,
-      available: callback(&|_| true),
+      available: callback(&|_, _| true),
       known_methods: vec!["OPTIONS", "GET", "POST", "PUT", "DELETE", "HEAD", "TRACE", "CONNECT", "PATCH"],
-      uri_too_long: callback(&|_| false),
+      uri_too_long: callback(&|_, _| false),
       allowed_methods: vec!["OPTIONS", "GET", "HEAD"],
-      malformed_request: callback(&|_| false),
-      not_authorized: callback(&|_| None),
-      forbidden: callback(&|_| false),
-      unsupported_content_headers: callback(&|_| false),
+      malformed_request: callback(&|_, _| false),
+      not_authorized: callback(&|_, _| None),
+      forbidden: callback(&|_, _| false),
+      unsupported_content_headers: callback(&|_, _| false),
       acceptable_content_types: vec!["application/json"],
-      valid_entity_length: callback(&|_| true),
-      finish_request: callback2(&|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
-      options: callback2(&|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
+      valid_entity_length: callback(&|_, _| true),
+      finish_request: callback(&|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
+      options: callback(&|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
       produces: vec!["application/json"],
       languages_provided: Vec::new(),
       charsets_provided: Vec::new(),
       encodings_provided: vec!["identity"],
       variances: Vec::new(),
-      resource_exists: callback(&|_| true),
-      previously_existed: callback(&|_| false),
-      moved_permanently: callback(&|_| None),
-      moved_temporarily: callback(&|_| None),
-      is_conflict: callback(&|_| false),
-      allow_missing_post: callback(&|_| false),
-      generate_etag: callback(&|_| None),
-      last_modified: callback(&|_| None),
-      delete_resource: callback(&|_| Ok(true)),
-      post_is_create: callback(&|_| false),
-      process_post: callback(&|_| Ok(false)),
-      process_put: callback(&|_| Ok(true)),
-      multiple_choices: callback(&|_| false),
-      create_path: callback(&|context| Ok(context.request.request_path.clone())),
-      expires: callback(&|_| None),
-      render_response: callback(&|_| None)
+      resource_exists: callback(&|_, _| true),
+      previously_existed: callback(&|_, _| false),
+      moved_permanently: callback(&|_, _| None),
+      moved_temporarily: callback(&|_, _| None),
+      is_conflict: callback(&|_, _| false),
+      allow_missing_post: callback(&|_, _| false),
+      generate_etag: callback(&|_, _| None),
+      last_modified: callback(&|_, _| None),
+      delete_resource: callback(&|_, _| Ok(true)),
+      post_is_create: callback(&|_, _| false),
+      process_post: callback(&|_, _| Ok(false)),
+      process_put: callback(&|_, _| Ok(true)),
+      multiple_choices: callback(&|_, _| false),
+      create_path: callback(&|context, _| Ok(context.request.request_path.clone())),
+      expires: callback(&|_, _| None),
+      render_response: callback(&|_, _| None)
     }
   }
 }
@@ -508,7 +500,7 @@ fn resource_etag_matches_header_values(
 ) -> bool {
   let header_values = context.request.find_header(header);
   let callback = resource.generate_etag.lock().unwrap();
-  match callback.deref()(context) {
+  match callback.deref()(context, resource) {
     Some(etag) => {
       header_values.iter().find(|val| {
         if val.value.starts_with("W/") {
@@ -566,21 +558,21 @@ fn execute_decision(
     },
     Decision::B11UriTooLong => {
       let callback = resource.uri_too_long.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::B12KnownMethod => DecisionResult::wrap(resource.known_methods
       .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some()),
     Decision::B13Available => {
       let callback = resource.available.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::B9MalformedRequest => {
       let callback = resource.malformed_request.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::B8Authorized => {
       let callback = resource.not_authorized.lock().unwrap();
-      match callback.deref()(context) {
+      match callback.deref()(context, resource) {
         Some(realm) => {
           context.response.add_header("WWW-Authenticate", vec![HeaderValue::parse_string(realm.as_str())]);
           DecisionResult::False
@@ -590,11 +582,11 @@ fn execute_decision(
     },
     Decision::B7Forbidden => {
       let callback = resource.forbidden.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::B6UnsupportedContentHeader => {
       let callback = resource.unsupported_content_headers.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::B5UnkownContentType => {
       DecisionResult::wrap(context.request.is_put_or_post() && resource.acceptable_content_types
@@ -603,7 +595,7 @@ fn execute_decision(
     },
     Decision::B4RequestEntityTooLarge => {
       let callback = resource.valid_entity_length.lock().unwrap();
-      DecisionResult::wrap(context.request.is_put_or_post() && !callback.deref()(context))
+      DecisionResult::wrap(context.request.is_put_or_post() && !callback.deref()(context, resource))
     },
     Decision::B3Options => DecisionResult::wrap(context.request.is_options()),
     Decision::C3AcceptExists => DecisionResult::wrap(context.request.has_accept_header()),
@@ -648,7 +640,7 @@ fn execute_decision(
     },
     Decision::G7ResourceExists => {
       let callback = resource.resource_exists.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::G8IfMatchExists => DecisionResult::wrap(context.request.has_header("If-Match")),
     Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => DecisionResult::wrap(
@@ -660,7 +652,7 @@ fn execute_decision(
       match context.if_unmodified_since {
         Some(unmodified_since) => {
           let callback = resource.last_modified.lock().unwrap();
-          match callback.deref()(context) {
+          match callback.deref()(context, resource) {
             Some(datetime) => DecisionResult::wrap(datetime > unmodified_since),
             None => DecisionResult::False
           }
@@ -679,12 +671,12 @@ fn execute_decision(
     Decision::J18GetHead => DecisionResult::wrap(context.request.is_get_or_head()),
     Decision::K7ResourcePreviouslyExisted => {
       let callback = resource.previously_existed.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::K13ETagInIfNoneMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-None-Match")),
     Decision::L5HasMovedTemporarily => {
       let callback = resource.moved_temporarily.lock().unwrap();
-      match callback.deref()(context) {
+      match callback.deref()(context, resource) {
         Some(location) => {
           context.response.add_header("Location", vec![HeaderValue::basic(&location)]);
           DecisionResult::True
@@ -705,7 +697,7 @@ fn execute_decision(
       match context.if_modified_since {
         Some(unmodified_since) => {
           let callback = resource.last_modified.lock().unwrap();
-          match callback.deref()(context) {
+          match callback.deref()(context, resource) {
             Some(datetime) => DecisionResult::wrap(datetime > unmodified_since),
             None => DecisionResult::False
           }
@@ -715,7 +707,7 @@ fn execute_decision(
     },
     Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => {
       let callback = resource.moved_permanently.lock().unwrap();
-      match callback.deref()(context) {
+      match callback.deref()(context, resource) {
         Some(location) => {
           context.response.add_header("Location", vec![HeaderValue::basic(&location)]);
           DecisionResult::True
@@ -725,7 +717,7 @@ fn execute_decision(
     },
     Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource => {
       let callback = resource.allow_missing_post.lock().unwrap();
-      if callback.deref()(context) {
+      if callback.deref()(context, resource) {
         context.new_resource = true;
         DecisionResult::True
       } else {
@@ -735,16 +727,16 @@ fn execute_decision(
     Decision::M16Delete => DecisionResult::wrap(context.request.is_delete()),
     Decision::M20DeleteEnacted => {
       let callback = resource.delete_resource.lock().unwrap();
-      match callback.deref()(context) {
+      match callback.deref()(context, resource) {
         Ok(result) => DecisionResult::wrap(result),
         Err(status) => DecisionResult::StatusCode(status)
       }
     },
     Decision::N11Redirect => {
       let callback = resource.post_is_create.lock().unwrap();
-      if callback.deref()(context) {
+      if callback.deref()(context, resource) {
         let callback = resource.create_path.lock().unwrap();
-        match callback.deref()(context) {
+        match callback.deref()(context, resource) {
           Ok(path) => {
             let base_path = sanitise_path(&context.request.base_path);
             let new_path = join_paths(&base_path, &sanitise_path(&path));
@@ -756,7 +748,7 @@ fn execute_decision(
         }
       } else {
         let callback = resource.process_post.lock().unwrap();
-        match callback.deref()(context) {
+        match callback.deref()(context, resource) {
           Ok(_) => DecisionResult::wrap(context.redirect),
           Err(status) => DecisionResult::StatusCode(status)
         }
@@ -764,12 +756,12 @@ fn execute_decision(
     },
     Decision::P3Conflict | &Decision::O14Conflict => {
       let callback = resource.is_conflict.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::P11NewResource => {
       if context.request.is_put() {
         let callback = resource.process_put.lock().unwrap();
-        match callback.deref()(context) {
+        match callback.deref()(context, resource) {
           Ok(_) => DecisionResult::wrap(context.new_resource),
           Err(status) => DecisionResult::StatusCode(status)
         }
@@ -780,7 +772,7 @@ fn execute_decision(
     Decision::O16Put => DecisionResult::wrap(context.request.is_put()),
     Decision::O18MultipleRepresentations => {
       let callback = resource.multiple_choices.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context))
+      DecisionResult::wrap(callback.deref()(context, resource))
     },
     Decision::O20ResponseHasBody => DecisionResult::wrap(context.response.has_body()),
     _ => DecisionResult::False
@@ -1028,21 +1020,21 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
   if context.request.is_get_or_head() {
     {
       let callback = resource.generate_etag.lock().unwrap();
-      match callback.deref()(context) {
+      match callback.deref()(context, resource) {
         Some(etag) => context.response.add_header("ETag", vec![HeaderValue::basic(&etag).quote()]),
         None => ()
       }
     }
     {
       let callback = resource.expires.lock().unwrap();
-      match callback.deref()(context) {
+      match callback.deref()(context, resource) {
         Some(datetime) => context.response.add_header("Expires", vec![HeaderValue::basic(datetime.to_rfc2822()).quote()]),
         None => ()
       }
     }
     {
       let callback = resource.last_modified.lock().unwrap();
-      match callback.deref()(context) {
+      match callback.deref()(context, resource) {
         Some(datetime) => context.response.add_header("Last-Modified", vec![HeaderValue::basic(datetime.to_rfc2822()).quote()]),
         None => ()
       }
@@ -1051,7 +1043,7 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
 
   if context.response.body.is_none() && context.response.status == 200 && context.request.is_get() {
     let callback = resource.render_response.lock().unwrap();
-    match callback.deref()(context) {
+    match callback.deref()(context, resource) {
       Some(body) => context.response.body = Some(body.into_bytes()),
       None => ()
     }
@@ -1060,7 +1052,7 @@ fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResou
   match &resource.finalise_response {
     Some(callback) => {
       let callback = callback.lock().unwrap();
-      callback.deref()(context);
+      callback.deref()(context, resource);
     },
     None => ()
   }
