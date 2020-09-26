@@ -10,15 +10,15 @@ const SEPERATORS: [char; 10] = ['(', ')', '<', '>', '@', ',', ';', '=', '{', '}'
 const VALUE_SEPERATORS: [char; 9] = ['(', ')', '<', '>', '@', ',', ';', '{', '}'];
 
 fn batch(values: &[String]) -> Vec<(String, String)> {
-    values.into_iter().batching(|it| {
-        match it.next() {
-           None => None,
-           Some(x) => match it.next() {
-               None => Some((s!(x), s!(""))),
-               Some(y) => Some((s!(x), s!(y))),
-           }
-        }
-    }).collect()
+  values.into_iter().batching(|it| {
+    match it.next() {
+     None => None,
+     Some(x) => match it.next() {
+       None => Some((x.to_string(), "".to_string())),
+       Some(y) => Some((x.to_string(), y.to_string())),
+     }
+    }
+  }).collect()
 }
 
 // value -> [^SEP]* | quoted-string
@@ -48,19 +48,19 @@ fn header_value(chars: &mut Peekable<Chars>, seperators: &[char]) -> String {
             value.push(chars.next().unwrap())
         }
     }
-    s!(value.trim())
+    value.trim().to_string()
 }
 
 // header -> value [; parameters]
-fn parse_header(s: String) -> Vec<String> {
-    let mut chars = s.chars().peekable();
-    let header_value = header_value(&mut chars, &VALUE_SEPERATORS);
-    let mut values = vec![header_value];
-    if chars.peek().is_some() && chars.peek().unwrap() == &';' {
-        chars.next();
-        parse_header_parameters(&mut chars, &mut values);
-    }
-    values
+fn parse_header(s: &str) -> Vec<String> {
+  let mut chars = s.chars().peekable();
+  let header_value = header_value(&mut chars, &VALUE_SEPERATORS);
+  let mut values = vec![header_value];
+  if chars.peek().is_some() && chars.peek().unwrap() == &';' {
+      chars.next();
+      parse_header_parameters(&mut chars, &mut values);
+  }
+  values
 }
 
 // parameters -> parameter [; parameters]
@@ -103,7 +103,7 @@ fn parse_header_parameter_value(chars: &mut Peekable<Chars>, values: &mut Vec<St
         if chars.peek().is_some() {
             chars.next();
         }
-        values.push(s!(value));
+        values.push(value.to_string());
     } else {
         values.push(header_value(chars, &[';']));
     }
@@ -128,34 +128,34 @@ pub struct HeaderValue {
 }
 
 impl HeaderValue {
-    /// Parses a header value string into a HeaderValue struct
-    pub fn parse_string(s: String) -> HeaderValue {
-        let values = parse_header(s.clone());
-        let split = values.split_first().unwrap();
-        if split.1.is_empty() {
-            HeaderValue::basic(&split.0)
-        } else {
-            HeaderValue {
-                value: split.0.clone(),
-                params: batch(split.1).iter()
-                    .fold(HashMap::new(), |mut map, ref params| {
-                        if !params.0.is_empty() {
-                            map.insert(params.0.clone(), params.1.clone());
-                        }
-                        map
-                    }),
-                quote: false
+  /// Parses a header value string into a HeaderValue struct
+  pub fn parse_string(s: &str) -> HeaderValue {
+    let values = parse_header(s);
+    let (first, second) = values.split_first().unwrap();
+    if second.is_empty() {
+      HeaderValue::basic(first.as_str())
+    } else {
+      HeaderValue {
+        value: first.clone(),
+        params: batch(second).iter()
+          .fold(HashMap::new(), |mut map, params| {
+            if !params.0.is_empty() {
+              map.insert(params.0.clone(), params.1.clone());
             }
-        }
+            map
+          }),
+        quote: false
+      }
     }
+  }
 
     /// Creates a basic header value that has no parameters
-    pub fn basic(s: &String) -> HeaderValue {
-        HeaderValue {
-            value: s.clone(),
-            params: HashMap::new(),
-            quote: false
-        }
+    pub fn basic<S: Into<String>>(s: S) -> HeaderValue {
+      HeaderValue {
+        value: s.into(),
+        params: HashMap::new(),
+        quote: false
+      }
     }
 
     /// Converts this header value into a string representation
@@ -181,11 +181,11 @@ impl HeaderValue {
     /// Parses a weak ETag value. Weak etags are in the form W/<quoted-string>. Returns the
     /// contents of the qouted string if it matches, otherwise returns None.
     pub fn weak_etag(&self) -> Option<String> {
-        if self.value.starts_with("W/") {
-            Some(parse_header(s!(self.value[2..]))[0].clone())
-        } else {
-            None
-        }
+      if self.value.starts_with("W/") {
+        Some(parse_header(&self.value[2..])[0].clone())
+      } else {
+        None
+      }
     }
 
     /// Convertes this header value into a quoted header value
@@ -226,7 +226,7 @@ impl Hash for HeaderValue {
 /// Simple macro to convert a string to a `HeaderValue` struct.
 #[macro_export]
 macro_rules! h {
-    ($e:expr) => (HeaderValue::parse_string($e.to_string()))
+  ($e:expr) => (HeaderValue::parse_string($e.into()))
 }
 
 #[cfg(test)]
@@ -236,74 +236,74 @@ mod tests {
 
     #[test]
     fn parse_header_value_test() {
-        expect!(HeaderValue::parse_string(s!(""))).to(be_equal_to(s!("")));
-        expect!(HeaderValue::parse_string(s!("A B"))).to(be_equal_to(s!("A B")));
-        expect!(HeaderValue::parse_string(s!("A; B"))).to(be_equal_to(HeaderValue {
-            value: s!("A"),
-            params: hashmap!{ s!("B") => s!("") },
+        expect!(HeaderValue::parse_string("")).to(be_equal_to("".to_string()));
+        expect!(HeaderValue::parse_string("A B")).to(be_equal_to("A B".to_string()));
+        expect!(HeaderValue::parse_string("A; B")).to(be_equal_to(HeaderValue {
+            value: "A".to_string(),
+            params: hashmap!{ "B".to_string() => "".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("text/html;charset=utf-8"))).to(be_equal_to(HeaderValue {
-            value: s!("text/html"),
-            params: hashmap!{ s!("charset") => s!("utf-8") },
+        expect!(HeaderValue::parse_string("text/html;charset=utf-8")).to(be_equal_to(HeaderValue {
+            value: "text/html".to_string(),
+            params: hashmap!{ "charset".to_string() => "utf-8".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("text/html;charset=UTF-8"))).to(be_equal_to(HeaderValue {
-            value: s!("text/html"),
-            params: hashmap!{ s!("charset") => s!("UTF-8") },
+        expect!(HeaderValue::parse_string("text/html;charset=UTF-8")).to(be_equal_to(HeaderValue {
+            value: "text/html".to_string(),
+            params: hashmap!{ "charset".to_string() => "UTF-8".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("Text/HTML;Charset= \"utf-8\""))).to(be_equal_to(HeaderValue {
-            value: s!("Text/HTML"),
-            params: hashmap!{ s!("Charset") => s!("utf-8") },
+        expect!(HeaderValue::parse_string("Text/HTML;Charset= \"utf-8\"")).to(be_equal_to(HeaderValue {
+            value: "Text/HTML".to_string(),
+            params: hashmap!{ "Charset".to_string() => "utf-8".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("text/html; charset = \" utf-8 \""))).to(be_equal_to(HeaderValue {
-            value: s!("text/html"),
-            params: hashmap!{ s!("charset") => s!(" utf-8 ") },
+        expect!(HeaderValue::parse_string("text/html; charset = \" utf-8 \"")).to(be_equal_to(HeaderValue {
+            value: "text/html".to_string(),
+            params: hashmap!{ "charset".to_string() => " utf-8 ".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!(";"))).to(be_equal_to(HeaderValue {
-            value: s!(""),
+        expect!(HeaderValue::parse_string(";")).to(be_equal_to(HeaderValue {
+            value: "".to_string(),
             params: hashmap!{},
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("A;b=c=d"))).to(be_equal_to(HeaderValue {
-            value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c=d") },
+        expect!(HeaderValue::parse_string("A;b=c=d")).to(be_equal_to(HeaderValue {
+            value: "A".to_string(),
+            params: hashmap!{ "b".to_string() => "c=d".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("A;b=\"c;d\""))).to(be_equal_to(HeaderValue {
-            value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c;d") },
+        expect!(HeaderValue::parse_string("A;b=\"c;d\"")).to(be_equal_to(HeaderValue {
+            value: "A".to_string(),
+            params: hashmap!{ "b".to_string() => "c;d".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("A;b=\"c\\\"d\""))).to(be_equal_to(HeaderValue {
-            value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c\"d") },
+        expect!(HeaderValue::parse_string("A;b=\"c\\\"d\"")).to(be_equal_to(HeaderValue {
+            value: "A".to_string(),
+            params: hashmap!{ "b".to_string() => "c\"d".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("A;b=\"c,d\""))).to(be_equal_to(HeaderValue {
-            value: s!("A"),
-            params: hashmap!{ s!("b") => s!("c,d") },
+        expect!(HeaderValue::parse_string("A;b=\"c,d\"")).to(be_equal_to(HeaderValue {
+            value: "A".to_string(),
+            params: hashmap!{ "b".to_string() => "c,d".to_string() },
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!("en;q=0.0"))).to(be_equal_to(HeaderValue {
-            value: s!("en"),
-            params: hashmap!{ s!("q") => s!("0.0") },
+        expect!(HeaderValue::parse_string("en;q=0.0")).to(be_equal_to(HeaderValue {
+            value: "en".to_string(),
+            params: hashmap!{ "q".to_string() => "0.0".to_string() },
             quote: false
         }));
     }
 
     #[test]
     fn parse_qouted_header_value_test() {
-        expect!(HeaderValue::parse_string(s!("\"*\""))).to(be_equal_to(HeaderValue {
-            value: s!("*"),
+        expect!(HeaderValue::parse_string("\"*\"")).to(be_equal_to(HeaderValue {
+            value: "*".to_string(),
             params: hashmap!{},
             quote: false
         }));
-        expect!(HeaderValue::parse_string(s!(" \"quoted; value\""))).to(be_equal_to(HeaderValue {
-            value: s!("quoted; value"),
+        expect!(HeaderValue::parse_string(" \"quoted; value\"")).to(be_equal_to(HeaderValue {
+            value: "quoted; value".to_string(),
             params: hashmap!{},
             quote: false
         }));
@@ -311,12 +311,12 @@ mod tests {
 
     #[test]
     fn parse_etag_header_value_test() {
-        let etag = s!("\"1234567890\"");
-        let weak_etag = s!("W/\"1234567890\"");
+        let etag = "\"1234567890\"";
+        let weak_etag = "W/\"1234567890\"";
 
         let header = HeaderValue::parse_string(etag);
         expect!(header.clone()).to(be_equal_to(HeaderValue {
-            value: s!("1234567890"),
+            value: "1234567890".to_string(),
             params: hashmap!{},
             quote: false
         }));
@@ -324,7 +324,7 @@ mod tests {
 
         let weak_etag_value = HeaderValue::parse_string(weak_etag.clone());
         expect!(weak_etag_value.clone()).to(be_equal_to(HeaderValue {
-            value: weak_etag.clone(),
+            value: weak_etag.to_string(),
             params: hashmap!{},
             quote: false
         }));

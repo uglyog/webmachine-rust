@@ -61,67 +61,67 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
 
  # fn main() { }
 
- fn from_hyper(req: &mut Request) -> http::Request<Vec<u8>> {
-  let mut request = http::Request::builder()
-    .uri(req.uri.to_string())
-    .method(req.method.as_ref());
-  for header in req.headers.iter() {
-    request = request.header(header.name(), header.value_string());
-  }
-  let mut buffer = Vec::new();
-  req.read_to_end(&mut buffer);
-  request.body(buffer.clone()).unwrap()
- }
-
- struct ServerHandler {
- }
-
- impl Handler for ServerHandler {
-
-     fn handle(&self, mut req: Request, res: Response) {
-         // setup the dispatcher, which maps paths to resources
-         let dispatcher = WebmachineDispatcher::new(
-             btreemap!{
-                 "/myresource".to_string() => Arc::new(WebmachineResource {
-                     // Methods allowed on this resource
-                     allowed_methods: vec!["OPTIONS".to_string(), "GET".to_string(),
-                        "HEAD".to_string(), "POST".to_string()],
-                     // if the resource exists callback
-                     resource_exists: Box::new(|context| true),
-                     // callback to render the response for the resource
-                     render_response: Box::new(|_| {
-                         let json_response = json!({
-                            "data": [1, 2, 3, 4]
-                         });
-                         Some(json_response.to_string())
-                     }),
-                     // callback to process the post for the resource
-                     process_post: Box::new(|context|  /* Handle the post here */ Ok(true) ),
-                     // default everything else
-                     .. WebmachineResource::default()
-                 })
-             }
-         );
-         // then dispatch the request to the web machine.
-         match dispatcher.dispatch(from_hyper(&mut req)) {
-             Ok(res) => (),
-             Err(err) => warn!("Error generating response - {}", err)
-         };
-     }
- }
-
- pub fn start_server() {
-     match Server::http(format!("0.0.0.0:0").as_str()) {
-         Ok(mut server) => {
-             // It is important to turn keep alive off
-             server.keep_alive(None);
-             server.handle(ServerHandler {});
-         },
-         Err(err) => {
-             error!("could not start server: {}", err);
-         }
-     }
- }
+ // fn from_hyper(req: &mut Request) -> http::Request<Vec<u8>> {
+ //  let mut request = http::Request::builder()
+ //    .uri(req.uri.to_string())
+ //    .method(req.method.as_ref());
+ //  for header in req.headers.iter() {
+ //    request = request.header(header.name(), header.value_string());
+ //  }
+ //  let mut buffer = Vec::new();
+ //  req.read_to_end(&mut buffer);
+ //  request.body(buffer.clone()).unwrap()
+ // }
+ //
+ // struct ServerHandler {
+ // }
+ //
+ // impl Handler for ServerHandler {
+ //
+ //     fn handle(&self, mut req: Request, res: Response) {
+ //         // setup the dispatcher, which maps paths to resources
+ //         let dispatcher = WebmachineDispatcher::new(
+ //             btreemap!{
+ //                 "/myresource".to_string() => Arc::new(WebmachineResource {
+ //                     // Methods allowed on this resource
+ //                     allowed_methods: vec!["OPTIONS".to_string(), "GET".to_string(),
+ //                        "HEAD".to_string(), "POST".to_string()],
+ //                     // if the resource exists callback
+ //                     resource_exists: Box::new(|context| true),
+ //                     // callback to render the response for the resource
+ //                     render_response: Box::new(|_| {
+ //                         let json_response = json!({
+ //                            "data": [1, 2, 3, 4]
+ //                         });
+ //                         Some(json_response.to_string())
+ //                     }),
+ //                     // callback to process the post for the resource
+ //                     process_post: Box::new(|context|  /* Handle the post here */ Ok(true) ),
+ //                     // default everything else
+ //                     .. WebmachineResource::default()
+ //                 })
+ //             }
+ //         );
+ //         // then dispatch the request to the web machine.
+ //         match dispatcher.dispatch(from_hyper(&mut req)) {
+ //             Ok(res) => (),
+ //             Err(err) => warn!("Error generating response - {}", err)
+ //         };
+ //     }
+ // }
+ //
+ // pub fn start_server() {
+ //     match Server::http(format!("0.0.0.0:0").as_str()) {
+ //         Ok(mut server) => {
+ //             // It is important to turn keep alive off
+ //             server.keep_alive(None);
+ //             server.handle(ServerHandler {});
+ //         },
+ //         Err(err) => {
+ //             error!("could not start server: {}", err);
+ //         }
+ //     }
+ // }
 ```
 
 ## Example implementations
@@ -145,121 +145,145 @@ use itertools::Itertools;
 use chrono::{DateTime, FixedOffset, Utc};
 use context::{WebmachineContext, WebmachineResponse, WebmachineRequest};
 use headers::HeaderValue;
-use http::{Request, Response};
-
-/// Simple macro to convert a string slice to a `String` struct.
-macro_rules! s {
-    ($e:expr) => ($e.to_string())
-}
+use http::{Request, Response, StatusCode};
+use hyper::service::Service;
+use std::task::{Context, Poll};
+use std::pin::Pin;
+use std::future::Future;
+use hyper::server::conn::AddrStream;
+use http::request::Parts;
+use futures::TryStreamExt;
+use hyper::Body;
+use std::rc::Rc;
+use std::borrow::Borrow;
+use std::ops::Deref;
 
 #[macro_use] pub mod headers;
 pub mod context;
 pub mod content_negotiation;
 
+/// Type of a Webmachine resource callback
+pub type WebmachineCallback<'a, T> = Arc<Mutex<Box<dyn Fn(&mut WebmachineContext) -> T + Send + Sync + 'a>>>;
+/// Type of a Webmachine resource callback with 2 parameters
+pub type WebmachineCallback2<'a, T> = Arc<Mutex<Box<dyn Fn(&mut WebmachineContext, &WebmachineResource) -> T + Send + Sync + 'a>>>;
+
+/// Wrap a callback in a structure that is safe to call between threads
+pub fn callback<T, RT>(cb: &T) -> WebmachineCallback<RT>
+  where T: Fn(&mut WebmachineContext) -> RT + Send + Sync {
+  Arc::new(Mutex::new(Box::new(cb)))
+}
+
+/// Wrap a callback with 2 parameters in a structure that is safe to call between threads
+pub fn callback2<T, RT>(cb: &T) -> WebmachineCallback2<RT>
+  where T: Fn(&mut WebmachineContext, &WebmachineResource) -> RT + Send + Sync {
+  Arc::new(Mutex::new(Box::new(cb)))
+}
+
 /// Struct to represent a resource in webmachine
-pub struct WebmachineResource {
+#[derive(Clone)]
+pub struct WebmachineResource<'a> {
   /// This is called just before the final response is constructed and sent. It allows the resource
   /// an opportunity to modify the response after the webmachine has executed.
-  pub finalise_response: Option<Box<dyn Fn(&mut WebmachineContext)>>,
+  pub finalise_response: Option<WebmachineCallback<'a, ()>>,
   /// This is invoked to render the response for the resource
-  pub render_response: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  pub render_response: WebmachineCallback<'a, Option<String>>,
   /// Is the resource available? Returning false will result in a '503 Service Not Available'
   /// response. Defaults to true. If the resource is only temporarily not available,
   /// add a 'Retry-After' response header.
-  pub available: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub available: WebmachineCallback<'a, bool>,
   /// HTTP methods that are known to the resource. Default includes all standard HTTP methods.
   /// One could override this to allow additional methods
-  pub known_methods: Vec<String>,
+  pub known_methods: Vec<&'a str>,
   /// If the URI is too long to be processed, this should return true, which will result in a
-  // '414 Request URI Too Long' response. Defaults to false.
-  pub uri_too_long: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  /// '414 Request URI Too Long' response. Defaults to false.
+  pub uri_too_long: WebmachineCallback<'a, bool>,
   /// HTTP methods that are allowed on this resource. Defaults to GET','HEAD and 'OPTIONS'.
-  pub allowed_methods: Vec<String>,
+  pub allowed_methods: Vec<&'a str>,
   /// If the request is malformed, this should return true, which will result in a
   /// '400 Malformed Request' response. Defaults to false.
-  pub malformed_request: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub malformed_request: WebmachineCallback<'a, bool>,
   /// Is the client or request not authorized? Returning a Some<String>
   /// will result in a '401 Unauthorized' response.  Defaults to None. If a Some(String) is
   /// returned, the string will be used as the value in the WWW-Authenticate header.
-  pub not_authorized: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  pub not_authorized: WebmachineCallback<'a, Option<String>>,
   /// Is the request or client forbidden? Returning true will result in a '403 Forbidden' response.
   /// Defaults to false.
-  pub forbidden: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub forbidden: WebmachineCallback<'a, bool>,
   /// If the request includes any invalid Content-* headers, this should return true, which will
   /// result in a '501 Not Implemented' response. Defaults to false.
-  pub unsupported_content_headers: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub unsupported_content_headers: WebmachineCallback<'a, bool>,
   /// The list of acceptable content types. Defaults to 'application/json'. If the content type
   /// of the request is not in this list, a '415 Unsupported Media Type' response is returned.
-  pub acceptable_content_types: Vec<String>,
+  pub acceptable_content_types: Vec<&'a str>,
   /// If the entity length on PUT or POST is invalid, this should return false, which will result
   /// in a '413 Request Entity Too Large' response. Defaults to true.
-  pub valid_entity_length: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub valid_entity_length: WebmachineCallback<'a, bool>,
   /// This is called just before the final response is constructed and sent. This allows the
   /// response to be modified. The default implementation adds CORS headers to the response
-  pub finish_request: Box<dyn Fn(&mut WebmachineContext, &WebmachineResource)>,
-  /// If the OPTIONS method is supported and is used, this return a HashMap of headers that
-  // should appear in the response. Defaults to CORS headers.
-  pub options: Box<dyn Fn(&mut WebmachineContext, &WebmachineResource) -> Option<HashMap<String, Vec<String>>>>,
+  pub finish_request: WebmachineCallback2<'a, ()>,
+  /// If the OPTIONS method is supported and is used, this returns a HashMap of headers that
+  /// should appear in the response. Defaults to CORS headers.
+  pub options: WebmachineCallback2<'a, Option<HashMap<String, Vec<String>>>>,
   /// The list of content types that this resource produces. Defaults to 'application/json'. If
   /// more than one is provided, and the client does not supply an Accept header, the first one
   /// will be selected.
-  pub produces: Vec<String>,
+  pub produces: Vec<&'a str>,
   /// The list of content languages that this resource provides. Defaults to an empty list,
   /// which represents all languages. If more than one is provided, and the client does not
   /// supply an Accept-Language header, the first one will be selected.
-  pub languages_provided: Vec<String>,
+  pub languages_provided: Vec<&'a str>,
   /// The list of charsets that this resource provides. Defaults to an empty list,
   /// which represents all charsets with ISO-8859-1 as the default. If more than one is provided,
   /// and the client does not supply an Accept-Charset header, the first one will be selected.
-  pub charsets_provided: Vec<String>,
+  pub charsets_provided: Vec<&'a str>,
   /// The list of encodings your resource wants to provide. The encoding will be applied to the
   /// response body automatically by Webmachine. Default includes only the 'identity' encoding.
-  pub encodings_provided: Vec<String>,
+  pub encodings_provided: Vec<&'a str>,
   /// The list of header names that should be included in the response's Vary header. The standard
   /// content negotiation headers (Accept, Accept-Encoding, Accept-Charset, Accept-Language) do
   /// not need to be specified here as Webmachine will add the correct elements of those
   /// automatically depending on resource behavior. Default is an empty list.
-  pub variances: Vec<String>,
+  pub variances: Vec<&'a str>,
   /// Does the resource exist? Returning a false value will result in a '404 Not Found' response
   /// unless it is a PUT or POST. Defaults to true.
-  pub resource_exists: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub resource_exists: WebmachineCallback<'a, bool>,
   /// If this resource is known to have existed previously, this should return true. Default is false.
-  pub previously_existed: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub previously_existed: WebmachineCallback<'a, bool>,
   /// If this resource has moved to a new location permanently, this should return the new
   /// location as a String. Default is to return None
-  pub moved_permanently: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  pub moved_permanently: WebmachineCallback<'a, Option<String>>,
   /// If this resource has moved to a new location temporarily, this should return the new
   /// location as a String. Default is to return None
-  pub moved_temporarily: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  pub moved_temporarily: WebmachineCallback<'a, Option<String>>,
   /// If this returns true, the client will receive a '409 Conflict' response. This is only
   /// called for PUT requests. Default is false.
-  pub is_conflict: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub is_conflict: WebmachineCallback<'a, bool>,
   /// Return true if the resource accepts POST requests to nonexistent resources. Defaults to false.
-  pub allow_missing_post: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub allow_missing_post: WebmachineCallback<'a, bool>,
   /// If this returns a value, it will be used as the value of the ETag header and for
   /// comparison in conditional requests. Default is None.
-  pub generate_etag: Box<dyn Fn(&mut WebmachineContext) -> Option<String>>,
+  pub generate_etag: WebmachineCallback<'a, Option<String>>,
   /// Returns the last modified date and time of the resource which will be added as the
   /// Last-Modified header in the response and used in negotiating conditional requests.
   /// Default is None
-  pub last_modified: Box<dyn Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>,
+  pub last_modified: WebmachineCallback<'a, Option<DateTime<FixedOffset>>>,
   /// Called when a DELETE request should be enacted. Return `Ok(true)` if the deletion succeeded,
   /// and `Ok(false)` if the deletion was accepted but cannot yet be guaranteed to have finished.
   /// If the delete fails for any reason, return an Err with the status code you wish returned
   /// (a 500 status makes sense).
   /// Defaults to `Ok(true)`.
-  pub delete_resource: Box<dyn Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+  pub delete_resource: WebmachineCallback<'a, Result<bool, u16>>,
   /// If POST requests should be treated as a request to put content into a (potentially new)
   /// resource as opposed to a generic submission for processing, then this should return true.
   /// If it does return true, then `create_path` will be called and the rest of the request will
   /// be treated much like a PUT to the path returned by that call. Default is false.
-  pub post_is_create: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub post_is_create: WebmachineCallback<'a, bool>,
   /// If `post_is_create` returns false, then this will be called to process any POST request.
   /// If it succeeds, return `Ok(true)`, `Ok(false)` otherwise. If it fails for any reason,
   /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
   /// Default is false. If you want the result of processing the POST to be a redirect, set
   /// `context.redirect` to true.
-  pub process_post: Box<dyn Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+  pub process_post: WebmachineCallback<'a, Result<bool, u16>>,
   /// This will be called on a POST request if `post_is_create` returns true. It should create
   /// the new resource and return the path as a valid URI part following the dispatcher prefix.
   /// That path will replace the previous one in the return value of `WebmachineRequest.request_path`
@@ -268,80 +292,79 @@ pub struct WebmachineResource {
   /// return an Err with the status code you wish returned (e.g., a 500 status makes sense).
   /// Default will return an `Ok(WebmachineRequest.request_path)`. If you want the result of
   /// processing the POST to be a redirect, set `context.redirect` to true.
-  pub create_path: Box<dyn Fn(&mut WebmachineContext) -> Result<String, u16>>,
+  pub create_path: WebmachineCallback<'a, Result<String, u16>>,
   /// This will be called to process any PUT request. If it succeeds, return `Ok(true)`,
   /// `Ok(false)` otherwise. If it fails for any reason, return an Err with the status code
   /// you wish returned (e.g., a 500 status makes sense). Default is `Ok(true)`
-  pub process_put: Box<dyn Fn(&mut WebmachineContext) -> Result<bool, u16>>,
+  pub process_put: WebmachineCallback<'a, Result<bool, u16>>,
   /// If this returns true, then it is assumed that multiple representations of the response are
   /// possible and a single one cannot be automatically chosen, so a 300 Multiple Choices will
   /// be sent instead of a 200. Default is false.
-  pub multiple_choices: Box<dyn Fn(&mut WebmachineContext) -> bool>,
+  pub multiple_choices: WebmachineCallback<'a, bool>,
   /// If the resource expires, this should return the date/time it expires. Default is None.
-  pub expires: Box<dyn Fn(&mut WebmachineContext) -> Option<DateTime<FixedOffset>>>
+  pub expires: WebmachineCallback<'a, Option<DateTime<FixedOffset>>>
 }
 
-impl Default for WebmachineResource {
+impl <'a> Default for WebmachineResource<'a> {
   /// Creates a default webmachine resource
-  fn default() -> WebmachineResource {
+  fn default() -> WebmachineResource<'a> {
     WebmachineResource {
       finalise_response: None,
-      available: Box::new(|_| true),
-      known_methods: vec![s!("OPTIONS"), s!("GET"), s!("POST"), s!("PUT"), s!("DELETE"),
-                          s!("HEAD"), s!("TRACE"), s!("CONNECT"), s!("PATCH")],
-      uri_too_long: Box::new(|_| false),
-      allowed_methods: vec![s!("OPTIONS"), s!("GET"), s!("HEAD")],
-      malformed_request: Box::new(|_| false),
-      not_authorized: Box::new(|_| None),
-      forbidden: Box::new(|_| false),
-      unsupported_content_headers: Box::new(|_| false),
-      acceptable_content_types: vec![s!("application/json")],
-      valid_entity_length: Box::new(|_| true),
-      finish_request: Box::new(|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
-      options: Box::new(|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
-      produces: vec![s!("application/json")],
+      available: callback(&|_| true),
+      known_methods: vec!["OPTIONS", "GET", "POST", "PUT", "DELETE", "HEAD", "TRACE", "CONNECT", "PATCH"],
+      uri_too_long: callback(&|_| false),
+      allowed_methods: vec!["OPTIONS", "GET", "HEAD"],
+      malformed_request: callback(&|_| false),
+      not_authorized: callback(&|_| None),
+      forbidden: callback(&|_| false),
+      unsupported_content_headers: callback(&|_| false),
+      acceptable_content_types: vec!["application/json"],
+      valid_entity_length: callback(&|_| true),
+      finish_request: callback2(&|context, resource| context.response.add_cors_headers(&resource.allowed_methods)),
+      options: callback2(&|_, resource| Some(WebmachineResponse::cors_headers(&resource.allowed_methods))),
+      produces: vec!["application/json"],
       languages_provided: Vec::new(),
       charsets_provided: Vec::new(),
-      encodings_provided: vec![s!("identity")],
+      encodings_provided: vec!["identity"],
       variances: Vec::new(),
-      resource_exists: Box::new(|_| true),
-      previously_existed: Box::new(|_| false),
-      moved_permanently: Box::new(|_| None),
-      moved_temporarily: Box::new(|_| None),
-      is_conflict: Box::new(|_| false),
-      allow_missing_post: Box::new(|_| false),
-      generate_etag: Box::new(|_| None),
-      last_modified: Box::new(|_| None),
-      delete_resource: Box::new(|_| Ok(true)),
-      post_is_create: Box::new(|_| false),
-      process_post: Box::new(|_| Ok(false)),
-      process_put: Box::new(|_| Ok(true)),
-      multiple_choices: Box::new(|_| false),
-      create_path: Box::new(|context| Ok(context.request.request_path.clone())),
-      expires: Box::new(|_| None),
-      render_response: Box::new(|_| None)
+      resource_exists: callback(&|_| true),
+      previously_existed: callback(&|_| false),
+      moved_permanently: callback(&|_| None),
+      moved_temporarily: callback(&|_| None),
+      is_conflict: callback(&|_| false),
+      allow_missing_post: callback(&|_| false),
+      generate_etag: callback(&|_| None),
+      last_modified: callback(&|_| None),
+      delete_resource: callback(&|_| Ok(true)),
+      post_is_create: callback(&|_| false),
+      process_post: callback(&|_| Ok(false)),
+      process_put: callback(&|_| Ok(true)),
+      multiple_choices: callback(&|_| false),
+      create_path: callback(&|context| Ok(context.request.request_path.clone())),
+      expires: callback(&|_| None),
+      render_response: callback(&|_| None)
     }
   }
 }
 
-fn sanitise_path(path: &String) -> Vec<String> {
-    path.split("/").filter(|p| !p.is_empty()).map(|p| p.to_string()).collect()
+fn sanitise_path(path: &str) -> Vec<String> {
+  path.split("/").filter(|p| !p.is_empty()).map(|p| p.to_string()).collect()
 }
 
 fn join_paths(base: &Vec<String>, path: &Vec<String>) -> String {
-    let mut paths = base.clone();
-    paths.extend_from_slice(path);
-    let filtered: Vec<String> = paths.iter().cloned().filter(|p| !p.is_empty()).collect();
-    if filtered.is_empty() {
-        s!("/")
+  let mut paths = base.clone();
+  paths.extend_from_slice(path);
+  let filtered: Vec<String> = paths.iter().cloned().filter(|p| !p.is_empty()).collect();
+  if filtered.is_empty() {
+    "/".to_string()
+  } else {
+    let new_path = filtered.iter().join("/");
+    if new_path.starts_with("/") {
+      new_path
     } else {
-        let new_path = filtered.iter().join("/");
-        if new_path.starts_with("/") {
-            new_path
-        } else {
-            s!("/") + &new_path
-        }
+      "/".to_owned() + &new_path
     }
+  }
 }
 
 const MAX_STATE_MACHINE_TRANSITIONS: u8 = 100;
@@ -499,301 +522,377 @@ lazy_static! {
     };
 }
 
-fn resource_etag_matches_header_values(resource: &WebmachineResource, context: &mut WebmachineContext,
-    header: &str) -> bool {
-    let header_values = context.request.find_header(&s!(header));
-    match resource.generate_etag.as_ref()(context) {
-        Some(etag) => {
-            header_values.iter().find(|val| {
-                if val.value.starts_with("W/") {
-                    val.weak_etag().unwrap() == etag
-                } else {
-                    val.value == etag
-                }
-            }).is_some()
-        },
-        None => false
-    }
-}
-
-fn validate_header_date(request: &WebmachineRequest, header: &str,
-    context_meta: &mut Option<DateTime<FixedOffset>>) -> bool {
-    let header_values = request.find_header(&s!(header));
-    let date_value = header_values.first().unwrap().clone().value;
-    match DateTime::parse_from_rfc2822(&date_value) {
-        Ok(datetime) => {
-            *context_meta = Some(datetime.clone());
-            true
-        },
-        Err(err) => {
-            debug!("Failed to parse '{}' header value '{}' - {}", header, date_value, err);
-            false
-        }
-    }
-}
-
-fn execute_decision(decision: &Decision, context: &mut WebmachineContext, resource: &WebmachineResource) -> DecisionResult {
-    match decision {
-        &Decision::B10MethodAllowed => {
-            match resource.allowed_methods
-                .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()) {
-                Some(_) => DecisionResult::True,
-                None => {
-                    context.response.add_header(s!("Allow"), resource.allowed_methods
-                        .iter()
-                        .map(HeaderValue::basic)
-                        .collect());
-                    DecisionResult::False
-                }
-            }
-        },
-        &Decision::B11UriTooLong => DecisionResult::wrap(resource.uri_too_long.as_ref()(context)),
-        &Decision::B12KnownMethod => DecisionResult::wrap(resource.known_methods
-            .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some()),
-        &Decision::B13Available => DecisionResult::wrap(resource.available.as_ref()(context)),
-        &Decision::B9MalformedRequest => DecisionResult::wrap(resource.malformed_request.as_ref()(context)),
-        &Decision::B8Authorized => match resource.not_authorized.as_ref()(context) {
-            Some(realm) => {
-                context.response.add_header(s!("WWW-Authenticate"), vec![HeaderValue::parse_string(realm.clone())]);
-                DecisionResult::False
-            },
-            None => DecisionResult::True
-        },
-        &Decision::B7Forbidden => DecisionResult::wrap(resource.forbidden.as_ref()(context)),
-        &Decision::B6UnsupportedContentHeader => DecisionResult::wrap(resource.unsupported_content_headers.as_ref()(context)),
-        &Decision::B5UnkownContentType => DecisionResult::wrap(context.request.is_put_or_post() && resource.acceptable_content_types
-                .iter().find(|ct| context.request.content_type().to_uppercase() == ct.to_uppercase() )
-                .is_none()),
-        &Decision::B4RequestEntityTooLarge => DecisionResult::wrap(context.request.is_put_or_post()
-            && !resource.valid_entity_length.as_ref()(context)),
-        &Decision::B3Options => DecisionResult::wrap(context.request.is_options()),
-        &Decision::C3AcceptExists => DecisionResult::wrap(context.request.has_accept_header()),
-        &Decision::C4AcceptableMediaTypeAvailable => match content_negotiation::matching_content_type(resource, &context.request) {
-            Some(media_type) => {
-                context.selected_media_type = Some(media_type);
-                DecisionResult::True
-            },
-            None => DecisionResult::False
-        },
-        &Decision::D4AcceptLanguageExists => DecisionResult::wrap(context.request.has_accept_language_header()),
-        &Decision::D5AcceptableLanguageAvailable => match content_negotiation::matching_language(resource, &context.request) {
-            Some(language) => {
-                if language != "*" {
-                    context.selected_language = Some(language.clone());
-                    context.response.add_header(s!("Content-Language"), vec![HeaderValue::parse_string(language)]);
-                }
-                DecisionResult::True
-            },
-            None => DecisionResult::False
-        },
-        &Decision::E5AcceptCharsetExists => DecisionResult::wrap(context.request.has_accept_charset_header()),
-        &Decision::E6AcceptableCharsetAvailable => match content_negotiation::matching_charset(resource, &context.request) {
-            Some(charset) => {
-                if charset != "*" {
-                    context.selected_charset = Some(charset.clone());
-                }
-                DecisionResult::True
-            },
-            None => DecisionResult::False
-        },
-        &Decision::F6AcceptEncodingExists => DecisionResult::wrap(context.request.has_accept_encoding_header()),
-        &Decision::F7AcceptableEncodingAvailable => match content_negotiation::matching_encoding(resource, &context.request) {
-            Some(encoding) => {
-                context.selected_encoding = Some(encoding.clone());
-                if encoding != "identity" {
-                    context.response.add_header(s!("Content-Encoding"), vec![HeaderValue::parse_string(encoding)]);
-                }
-                DecisionResult::True
-            },
-            None => DecisionResult::False
-        },
-        &Decision::G7ResourceExists => DecisionResult::wrap(resource.resource_exists.as_ref()(context)),
-        &Decision::G8IfMatchExists => DecisionResult::wrap(context.request.has_header(&s!("If-Match"))),
-        &Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => DecisionResult::wrap(
-            context.request.has_header_value(&s!("If-Match"), &s!("*"))),
-        &Decision::G11EtagInIfMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-Match")),
-        &Decision::H10IfUnmodifiedSinceExists => DecisionResult::wrap(context.request.has_header(&s!("If-Unmodified-Since"))),
-        &Decision::H11IfUnmodifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request,
-            "If-Unmodified-Since", &mut context.if_unmodified_since)),
-        &Decision::H12LastModifiedGreaterThanUMS => {
-            match resource.last_modified.as_ref()(context) {
-                Some(datetime) => DecisionResult::wrap(datetime > context.if_unmodified_since.unwrap()),
-                None => DecisionResult::False
-            }
-        },
-        &Decision::I7Put => if context.request.is_put() {
-            context.new_resource = true;
-            DecisionResult::True
+fn resource_etag_matches_header_values(
+  resource: &WebmachineResource,
+  context: &mut WebmachineContext,
+  header: &str
+) -> bool {
+  let header_values = context.request.find_header(header);
+  let callback = resource.generate_etag.lock().unwrap();
+  match callback.deref()(context) {
+    Some(etag) => {
+      header_values.iter().find(|val| {
+        if val.value.starts_with("W/") {
+          val.weak_etag().unwrap() == etag
         } else {
-            DecisionResult::False
-        },
-        &Decision::I12IfNoneMatchExists => DecisionResult::wrap(context.request.has_header(&s!("If-None-Match"))),
-        &Decision::I13IfNoneMatchStarExists => DecisionResult::wrap(context.request.has_header_value(&s!("If-None-Match"), &s!("*"))),
-        &Decision::J18GetHead => DecisionResult::wrap(context.request.is_get_or_head()),
-        &Decision::K7ResourcePreviouslyExisted => DecisionResult::wrap(resource.previously_existed.as_ref()(context)),
-        &Decision::K13ETagInIfNoneMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-None-Match")),
-        &Decision::L5HasMovedTemporarily => match resource.moved_temporarily.as_ref()(context) {
-            Some(location) => {
-                context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
-                DecisionResult::True
-            },
-            None => DecisionResult::False
-        },
-        &Decision::L7Post | &Decision::M5Post | &Decision::N16Post => DecisionResult::wrap(context.request.is_post()),
-        &Decision::L13IfModifiedSinceExists => DecisionResult::wrap(context.request.has_header(&s!("If-Modified-Since"))),
-        &Decision::L14IfModifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request,
-            "If-Modified-Since", &mut context.if_modified_since)),
-        &Decision::L15IfModifiedSinceGreaterThanNow => {
-            let datetime = context.if_modified_since.unwrap();
-            let timezone = datetime.timezone();
-            DecisionResult::wrap(datetime > Utc::now().with_timezone(&timezone))
-        },
-        &Decision::L17IfLastModifiedGreaterThanMS => {
-            match resource.last_modified.as_ref()(context) {
-                Some(datetime) => DecisionResult::wrap(datetime > context.if_modified_since.unwrap()),
-                None => DecisionResult::False
-            }
-        },
-        &Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => match resource.moved_permanently.as_ref()(context) {
-            Some(location) => {
-                context.response.add_header(s!("Location"), vec![HeaderValue::basic(&location)]);
-                DecisionResult::True
-            },
-            None => DecisionResult::False
-        },
-        &Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource =>
-            if resource.allow_missing_post.as_ref()(context) {
-                context.new_resource = true;
-                DecisionResult::True
-            } else {
-                DecisionResult::False
-            },
-        &Decision::M16Delete => DecisionResult::wrap(context.request.is_delete()),
-        &Decision::M20DeleteEnacted => match resource.delete_resource.as_ref()(context) {
-            Ok(result) => DecisionResult::wrap(result),
-            Err(status) => DecisionResult::StatusCode(status)
-        },
-        &Decision::N11Redirect => {
-            if resource.post_is_create.as_ref()(context) {
-                match resource.create_path.as_ref()(context) {
-                    Ok(path) => {
-                        let base_path = sanitise_path(&context.request.base_path);
-                        let new_path = join_paths(&base_path, &sanitise_path(&path));
-                        context.request.request_path = path.clone();
-                        context.response.add_header(s!("Location"), vec![HeaderValue::basic(&new_path)]);
-                        DecisionResult::wrap(context.redirect)
-                    },
-                    Err(status) => DecisionResult::StatusCode(status)
-                }
-            } else {
-                match resource.process_post.as_ref()(context) {
-                    Ok(_) => DecisionResult::wrap(context.redirect),
-                    Err(status) => DecisionResult::StatusCode(status)
-                }
-            }
-        },
-        &Decision::P3Conflict | &Decision::O14Conflict => DecisionResult::wrap(resource.is_conflict.as_ref()(context)),
-        &Decision::P11NewResource => {
-            if context.request.is_put() {
-                match resource.process_put.as_ref()(context) {
-                    Ok(_) => DecisionResult::wrap(context.new_resource),
-                    Err(status) => DecisionResult::StatusCode(status)
-                }
-            } else {
-                DecisionResult::wrap(context.new_resource)
-            }
-        },
-        &Decision::O16Put => DecisionResult::wrap(context.request.is_put()),
-        &Decision::O18MultipleRepresentations => DecisionResult::wrap(resource.multiple_choices.as_ref()(context)),
-        &Decision::O20ResponseHasBody => DecisionResult::wrap(context.response.has_body()),
-        _ => DecisionResult::False
+          val.value == etag
+        }
+      }).is_some()
+    },
+    None => false
+  }
+}
+
+fn validate_header_date(
+  request: &WebmachineRequest,
+  header: &str,
+  context_meta: &mut Option<DateTime<FixedOffset>>
+) -> bool {
+  let header_values = request.find_header(header);
+  if let Some(date_value) = header_values.first() {
+    match DateTime::parse_from_rfc2822(&date_value.value) {
+      Ok(datetime) => {
+        *context_meta = Some(datetime.clone());
+        true
+      },
+      Err(err) => {
+        debug!("Failed to parse '{}' header value '{:?}' - {}", header, date_value, err);
+        false
+      }
     }
+  } else {
+    false
+  }
+}
+
+fn execute_decision(
+  decision: &Decision,
+  context: &mut WebmachineContext,
+  resource: &WebmachineResource
+) -> DecisionResult {
+  match decision {
+    Decision::B10MethodAllowed => {
+      match resource.allowed_methods
+        .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()) {
+        Some(_) => DecisionResult::True,
+        None => {
+          context.response.add_header("Allow", resource.allowed_methods
+            .iter()
+            .cloned()
+            .map(HeaderValue::basic)
+            .collect());
+          DecisionResult::False
+        }
+      }
+    },
+    Decision::B11UriTooLong => {
+      let callback = resource.uri_too_long.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::B12KnownMethod => DecisionResult::wrap(resource.known_methods
+      .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some()),
+    Decision::B13Available => {
+      let callback = resource.available.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::B9MalformedRequest => {
+      let callback = resource.malformed_request.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::B8Authorized => {
+      let callback = resource.not_authorized.lock().unwrap();
+      match callback.deref()(context) {
+        Some(realm) => {
+          context.response.add_header("WWW-Authenticate", vec![HeaderValue::parse_string(realm.as_str())]);
+          DecisionResult::False
+        },
+        None => DecisionResult::True
+      }
+    },
+    Decision::B7Forbidden => {
+      let callback = resource.forbidden.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::B6UnsupportedContentHeader => {
+      let callback = resource.unsupported_content_headers.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::B5UnkownContentType => {
+      DecisionResult::wrap(context.request.is_put_or_post() && resource.acceptable_content_types
+        .iter().find(|ct| context.request.content_type().to_uppercase() == ct.to_uppercase() )
+        .is_none())
+    },
+    Decision::B4RequestEntityTooLarge => {
+      let callback = resource.valid_entity_length.lock().unwrap();
+      DecisionResult::wrap(context.request.is_put_or_post() && !callback.deref()(context))
+    },
+    Decision::B3Options => DecisionResult::wrap(context.request.is_options()),
+    Decision::C3AcceptExists => DecisionResult::wrap(context.request.has_accept_header()),
+    Decision::C4AcceptableMediaTypeAvailable => match content_negotiation::matching_content_type(resource, &context.request) {
+      Some(media_type) => {
+        context.selected_media_type = Some(media_type);
+        DecisionResult::True
+      },
+      None => DecisionResult::False
+    },
+    Decision::D4AcceptLanguageExists => DecisionResult::wrap(context.request.has_accept_language_header()),
+    Decision::D5AcceptableLanguageAvailable => match content_negotiation::matching_language(resource, &context.request) {
+      Some(language) => {
+        if language != "*" {
+          context.selected_language = Some(language.clone());
+          context.response.add_header("Content-Language", vec![HeaderValue::parse_string(&language)]);
+        }
+        DecisionResult::True
+      },
+      None => DecisionResult::False
+    },
+    Decision::E5AcceptCharsetExists => DecisionResult::wrap(context.request.has_accept_charset_header()),
+    Decision::E6AcceptableCharsetAvailable => match content_negotiation::matching_charset(resource, &context.request) {
+      Some(charset) => {
+        if charset != "*" {
+            context.selected_charset = Some(charset.clone());
+        }
+        DecisionResult::True
+      },
+      None => DecisionResult::False
+    },
+    Decision::F6AcceptEncodingExists => DecisionResult::wrap(context.request.has_accept_encoding_header()),
+    Decision::F7AcceptableEncodingAvailable => match content_negotiation::matching_encoding(resource, &context.request) {
+      Some(encoding) => {
+        context.selected_encoding = Some(encoding.clone());
+        if encoding != "identity" {
+            context.response.add_header("Content-Encoding", vec![HeaderValue::parse_string(&encoding)]);
+        }
+        DecisionResult::True
+      },
+      None => DecisionResult::False
+    },
+    Decision::G7ResourceExists => {
+      let callback = resource.resource_exists.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::G8IfMatchExists => DecisionResult::wrap(context.request.has_header("If-Match")),
+    Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => DecisionResult::wrap(
+        context.request.has_header_value("If-Match", "*")),
+    Decision::G11EtagInIfMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-Match")),
+    Decision::H10IfUnmodifiedSinceExists => DecisionResult::wrap(context.request.has_header("If-Unmodified-Since")),
+    Decision::H11IfUnmodifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request, "If-Unmodified-Since", &mut context.if_unmodified_since)),
+    Decision::H12LastModifiedGreaterThanUMS => {
+      match context.if_unmodified_since {
+        Some(unmodified_since) => {
+          let callback = resource.last_modified.lock().unwrap();
+          match callback.deref()(context) {
+            Some(datetime) => DecisionResult::wrap(datetime > unmodified_since),
+            None => DecisionResult::False
+          }
+        },
+        None => DecisionResult::False
+      }
+    },
+    Decision::I7Put => if context.request.is_put() {
+      context.new_resource = true;
+      DecisionResult::True
+    } else {
+      DecisionResult::False
+    },
+    Decision::I12IfNoneMatchExists => DecisionResult::wrap(context.request.has_header("If-None-Match")),
+    Decision::I13IfNoneMatchStarExists => DecisionResult::wrap(context.request.has_header_value("If-None-Match", "*")),
+    Decision::J18GetHead => DecisionResult::wrap(context.request.is_get_or_head()),
+    Decision::K7ResourcePreviouslyExisted => {
+      let callback = resource.previously_existed.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::K13ETagInIfNoneMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-None-Match")),
+    Decision::L5HasMovedTemporarily => {
+      let callback = resource.moved_temporarily.lock().unwrap();
+      match callback.deref()(context) {
+        Some(location) => {
+          context.response.add_header("Location", vec![HeaderValue::basic(&location)]);
+          DecisionResult::True
+        },
+        None => DecisionResult::False
+      }
+    },
+    Decision::L7Post | &Decision::M5Post | &Decision::N16Post => DecisionResult::wrap(context.request.is_post()),
+    Decision::L13IfModifiedSinceExists => DecisionResult::wrap(context.request.has_header("If-Modified-Since")),
+    Decision::L14IfModifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request,
+        "If-Modified-Since", &mut context.if_modified_since)),
+    Decision::L15IfModifiedSinceGreaterThanNow => {
+        let datetime = context.if_modified_since.unwrap();
+        let timezone = datetime.timezone();
+        DecisionResult::wrap(datetime > Utc::now().with_timezone(&timezone))
+    },
+    Decision::L17IfLastModifiedGreaterThanMS => {
+      match context.if_modified_since {
+        Some(unmodified_since) => {
+          let callback = resource.last_modified.lock().unwrap();
+          match callback.deref()(context) {
+            Some(datetime) => DecisionResult::wrap(datetime > unmodified_since),
+            None => DecisionResult::False
+          }
+        },
+        None => DecisionResult::False
+      }
+    },
+    Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => {
+      let callback = resource.moved_permanently.lock().unwrap();
+      match callback.deref()(context) {
+        Some(location) => {
+          context.response.add_header("Location", vec![HeaderValue::basic(&location)]);
+          DecisionResult::True
+        },
+        None => DecisionResult::False
+      }
+    },
+    Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource => {
+      let callback = resource.allow_missing_post.lock().unwrap();
+      if callback.deref()(context) {
+        context.new_resource = true;
+        DecisionResult::True
+      } else {
+        DecisionResult::False
+      }
+    },
+    Decision::M16Delete => DecisionResult::wrap(context.request.is_delete()),
+    Decision::M20DeleteEnacted => {
+      let callback = resource.delete_resource.lock().unwrap();
+      match callback.deref()(context) {
+        Ok(result) => DecisionResult::wrap(result),
+        Err(status) => DecisionResult::StatusCode(status)
+      }
+    },
+    Decision::N11Redirect => {
+      let callback = resource.post_is_create.lock().unwrap();
+      if callback.deref()(context) {
+        let callback = resource.create_path.lock().unwrap();
+        match callback.deref()(context) {
+          Ok(path) => {
+            let base_path = sanitise_path(&context.request.base_path);
+            let new_path = join_paths(&base_path, &sanitise_path(&path));
+            context.request.request_path = path.clone();
+            context.response.add_header("Location", vec![HeaderValue::basic(&new_path)]);
+            DecisionResult::wrap(context.redirect)
+          },
+          Err(status) => DecisionResult::StatusCode(status)
+        }
+      } else {
+        let callback = resource.process_post.lock().unwrap();
+        match callback.deref()(context) {
+          Ok(_) => DecisionResult::wrap(context.redirect),
+          Err(status) => DecisionResult::StatusCode(status)
+        }
+      }
+    },
+    Decision::P3Conflict | &Decision::O14Conflict => {
+      let callback = resource.is_conflict.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::P11NewResource => {
+      if context.request.is_put() {
+        let callback = resource.process_put.lock().unwrap();
+        match callback.deref()(context) {
+          Ok(_) => DecisionResult::wrap(context.new_resource),
+          Err(status) => DecisionResult::StatusCode(status)
+        }
+      } else {
+        DecisionResult::wrap(context.new_resource)
+      }
+    },
+    Decision::O16Put => DecisionResult::wrap(context.request.is_put()),
+    Decision::O18MultipleRepresentations => {
+      let callback = resource.multiple_choices.lock().unwrap();
+      DecisionResult::wrap(callback.deref()(context))
+    },
+    Decision::O20ResponseHasBody => DecisionResult::wrap(context.response.has_body()),
+    _ => DecisionResult::False
+  }
 }
 
 fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineResource) {
-    let mut state = Decision::Start;
-    let mut decisions: Vec<(Decision, bool, Decision)> = Vec::new();
-    let mut loop_count = 0;
-    while !state.is_terminal() {
-        loop_count += 1;
-        if loop_count >= MAX_STATE_MACHINE_TRANSITIONS {
-            panic!("State machine has not terminated within {} transitions!", loop_count);
-        }
-        debug!("state is {:?}", state);
-        state = match TRANSITION_MAP.get(&state) {
-            Some(transition) => match transition {
-                &Transition::To(ref decision) => {
-                    debug!("Transitioning to {:?}", decision);
-                    decision.clone()
-                },
-                &Transition::Branch(ref decision_true, ref decision_false) => {
-                    match execute_decision(&state, context, resource) {
-                        DecisionResult::True => {
-                            debug!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
-                            decisions.push((state, true, decision_true.clone()));
-                            decision_true.clone()
-                        },
-                        DecisionResult::False => {
-                            debug!("Transitioning from {:?} to {:?} as decision is false", state, decision_false);
-                            decisions.push((state, false, decision_false.clone()));
-                            decision_false.clone()
-                        },
-                        DecisionResult::StatusCode(code) => {
-                            let decision = Decision::End(code);
-                            debug!("Transitioning from {:?} to {:?} as decision is a status code", state, decision);
-                            decisions.push((state, false, decision.clone()));
-                            decision.clone()
-                        }
-                    }
-                }
-            },
-            None => {
-                error!("Error transitioning from {:?}, the TRANSITION_MAP is misconfigured", state);
-                decisions.push((state, false, Decision::End(500)));
-                Decision::End(500)
-            }
-        }
+  let mut state = Decision::Start;
+  let mut decisions: Vec<(Decision, bool, Decision)> = Vec::new();
+  let mut loop_count = 0;
+  while !state.is_terminal() {
+    loop_count += 1;
+    if loop_count >= MAX_STATE_MACHINE_TRANSITIONS {
+      panic!("State machine has not terminated within {} transitions!", loop_count);
     }
-    debug!("Final state is {:?}", state);
-    match state {
-        Decision::End(status) => context.response.status = status,
-        Decision::A3Options => {
-            context.response.status = 200;
-            match resource.options.as_ref()(context, resource) {
-                Some(headers) => context.response.add_headers(headers),
-                None => ()
-            }
+    debug!("state is {:?}", state);
+    state = match TRANSITION_MAP.get(&state) {
+      Some(transition) => match transition {
+        &Transition::To(ref decision) => {
+          debug!("Transitioning to {:?}", decision);
+          decision.clone()
         },
-        _ => ()
+        &Transition::Branch(ref decision_true, ref decision_false) => {
+          match execute_decision(&state, context, resource) {
+            DecisionResult::True => {
+              debug!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
+              decisions.push((state, true, decision_true.clone()));
+              decision_true.clone()
+            },
+            DecisionResult::False => {
+              debug!("Transitioning from {:?} to {:?} as decision is false", state, decision_false);
+              decisions.push((state, false, decision_false.clone()));
+              decision_false.clone()
+            },
+            DecisionResult::StatusCode(code) => {
+              let decision = Decision::End(code);
+              debug!("Transitioning from {:?} to {:?} as decision is a status code", state, decision);
+              decisions.push((state, false, decision.clone()));
+              decision.clone()
+            }
+          }
+        }
+      },
+      None => {
+        error!("Error transitioning from {:?}, the TRANSITION_MAP is misconfigured", state);
+        decisions.push((state, false, Decision::End(500)));
+        Decision::End(500)
+      }
     }
+  }
+  debug!("Final state is {:?}", state);
+  match state {
+    Decision::End(status) => context.response.status = status,
+    Decision::A3Options => {
+      context.response.status = 200;
+      let callback = resource.options.lock().unwrap();
+      match callback.deref()(context, resource) {
+        Some(headers) => context.response.add_headers(headers),
+        None => ()
+      }
+    },
+    _ => ()
+  }
 }
 
-fn update_paths_for_resource(request: &mut WebmachineRequest, base_path: &String) {
-    request.base_path = base_path.clone();
-    if request.request_path.len() > base_path.len() {
-        let request_path = request.request_path.clone();
-        let subpath = request_path.split_at(base_path.len()).1;
-        if subpath.starts_with("/") {
-            request.request_path = s!(subpath);
-        } else {
-            request.request_path = s!("/") + subpath;
-        }
+fn update_paths_for_resource(request: &mut WebmachineRequest, base_path: &str) {
+  request.base_path = base_path.into();
+  if request.request_path.len() > base_path.len() {
+    let request_path = request.request_path.clone();
+    let subpath = request_path.split_at(base_path.len()).1;
+    if subpath.starts_with("/") {
+      request.request_path = subpath.to_string();
     } else {
-        request.request_path = s!("/");
+      request.request_path = "/".to_owned() + subpath;
     }
+  } else {
+    request.request_path = "/".to_string();
+  }
 }
 
 fn parse_header_values(value: &str) -> Vec<HeaderValue> {
   if value.is_empty() {
     Vec::new()
   } else {
-    value.split(',').map(|s| HeaderValue::parse_string(s!(s.trim()))).collect()
+    value.split(',').map(|s| HeaderValue::parse_string(s.trim())).collect()
   }
 }
 
-fn headers_from_http_request(req: &Request<Vec<u8>>) -> HashMap<String, Vec<HeaderValue>> {
-  req.headers().iter()
-    .map(|header| (s!(header.0.as_str()), parse_header_values(header.1.to_str().unwrap_or_default())))
+fn headers_from_http_request(req: &Parts) -> HashMap<String, Vec<HeaderValue>> {
+  req.headers.iter()
+    .map(|(name, value)| (name.to_string(), parse_header_values(value.to_str().unwrap_or_default())))
     .collect()
 }
 
@@ -867,104 +966,130 @@ fn parse_query(query: &str) -> HashMap<String, Vec<String>> {
   }
 }
 
-fn request_from_http_request(req: &Request<Vec<u8>>) -> WebmachineRequest {
-  let request_path = req.uri().path().to_string();
-  let body = if req.body().is_empty() {
-    None
-  } else {
-    Some(req.body().clone())
+async fn request_from_http_request(req: Request<hyper::Body>) -> WebmachineRequest {
+  let (parts, body) = req.into_parts();
+  let request_path = parts.uri.path().to_string();
+
+  let req_body = body.try_fold(Vec::new(), |mut data, chunk| async move {
+      data.extend_from_slice(&chunk);
+      Ok(data)
+    }).await;
+  let body = match req_body {
+    Ok(body) => {
+      if body.is_empty() {
+        None
+      } else {
+        Some(body.clone())
+      }
+    },
+    Err(err) => {
+      error!("Failed to read the request body: {}", err);
+      None
+    }
   };
-  let query = match req.uri().query() {
+
+  let query = match parts.uri.query() {
     Some(query) => parse_query(query),
     None => HashMap::new()
   };
   WebmachineRequest {
     request_path: request_path.clone(),
-    base_path: s!("/"),
-    method: req.method().as_str().into(),
-    headers: headers_from_http_request(req),
+    base_path: "/".to_string(),
+    method: parts.method.as_str().into(),
+    headers: headers_from_http_request(&parts),
     body,
     query
   }
 }
 
 fn finalise_response(context: &mut WebmachineContext, resource: &WebmachineResource) {
-    if !context.response.has_header(&s!("Content-Type")) {
-        let media_type = match &context.selected_media_type {
-            &Some(ref media_type) => media_type.clone(),
-            &None => s!("application/json")
-        };
-        let charset = match &context.selected_charset {
-            &Some(ref charset) => charset.clone(),
-            &None => s!("ISO-8859-1")
-        };
-        let header = HeaderValue {
-            value: media_type,
-            params: hashmap!{ s!("charset") => charset },
-            quote: false
-        };
-        context.response.add_header(s!("Content-Type"), vec![header]);
-    }
-
-    let mut vary_header = if !context.response.has_header(&s!("Vary")) {
-        resource.variances
-            .iter()
-            .map(|h| HeaderValue::parse_string(h.clone()))
-            .collect()
-    } else {
-        Vec::new()
+  if !context.response.has_header("Content-Type") {
+    let media_type = match &context.selected_media_type {
+      &Some(ref media_type) => media_type.clone(),
+      &None => "application/json".to_string()
     };
+    let charset = match &context.selected_charset {
+      &Some(ref charset) => charset.clone(),
+      &None => "ISO-8859-1".to_string()
+    };
+    let header = HeaderValue {
+      value: media_type,
+      params: hashmap!{ "charset".to_string() => charset },
+      quote: false
+    };
+    context.response.add_header("Content-Type", vec![header]);
+  }
 
-    if resource.languages_provided.len() > 1 {
-        vary_header.push(h!("Accept-Language"));
-    }
-    if resource.charsets_provided.len() > 1 {
-        vary_header.push(h!("Accept-Charset"));
-    }
-    if resource.encodings_provided.len() > 1 {
-        vary_header.push(h!("Accept-Encoding"));
-    }
-    if resource.produces.len() > 1 {
-        vary_header.push(h!("Accept"));
-    }
+  let mut vary_header = if !context.response.has_header("Vary") {
+    resource.variances
+      .iter()
+      .map(|h| HeaderValue::parse_string(h.clone()))
+      .collect()
+  } else {
+    Vec::new()
+  };
 
-    if vary_header.len() > 1 {
-        context.response.add_header(s!("Vary"), vary_header.iter().cloned().unique().collect());
-    }
+  if resource.languages_provided.len() > 1 {
+    vary_header.push(h!("Accept-Language"));
+  }
+  if resource.charsets_provided.len() > 1 {
+    vary_header.push(h!("Accept-Charset"));
+  }
+  if resource.encodings_provided.len() > 1 {
+    vary_header.push(h!("Accept-Encoding"));
+  }
+  if resource.produces.len() > 1 {
+    vary_header.push(h!("Accept"));
+  }
 
-    if context.request.is_get_or_head() {
-        match resource.generate_etag.as_ref()(context) {
-            Some(etag) => context.response.add_header(s!("ETag"), vec![HeaderValue::basic(&etag).quote()]),
-            None => ()
-        }
-        match resource.expires.as_ref()(context) {
-            Some(datetime) => context.response.add_header(s!("Expires"),
-                vec![HeaderValue::basic(&datetime.to_rfc2822()).quote()]),
-            None => ()
-        }
-        match resource.last_modified.as_ref()(context) {
-            Some(datetime) => context.response.add_header(s!("Last-Modified"),
-                vec![HeaderValue::basic(&datetime.to_rfc2822()).quote()]),
-            None => ()
-        }
-    }
+  if vary_header.len() > 1 {
+    context.response.add_header("Vary", vary_header.iter().cloned().unique().collect());
+  }
 
-    if context.response.body.is_none() && context.response.status == 200 && context.request.is_get() {
-        match resource.render_response.as_ref()(context) {
-            Some(body) => context.response.body = Some(body.into_bytes()),
-            None => ()
-        }
+  if context.request.is_get_or_head() {
+    {
+      let callback = resource.generate_etag.lock().unwrap();
+      match callback.deref()(context) {
+        Some(etag) => context.response.add_header("ETag", vec![HeaderValue::basic(&etag).quote()]),
+        None => ()
+      }
     }
-
-    match &resource.finalise_response {
-        &Some(ref callback) => callback.as_ref()(context),
-        &None => ()
+    {
+      let callback = resource.expires.lock().unwrap();
+      match callback.deref()(context) {
+        Some(datetime) => context.response.add_header("Expires", vec![HeaderValue::basic(datetime.to_rfc2822()).quote()]),
+        None => ()
+      }
     }
+    {
+      let callback = resource.last_modified.lock().unwrap();
+      match callback.deref()(context) {
+        Some(datetime) => context.response.add_header("Last-Modified", vec![HeaderValue::basic(datetime.to_rfc2822()).quote()]),
+        None => ()
+      }
+    }
+  }
 
-    debug!("Final response: {:?}", context.response);
+  if context.response.body.is_none() && context.response.status == 200 && context.request.is_get() {
+    let callback = resource.render_response.lock().unwrap();
+    match callback.deref()(context) {
+      Some(body) => context.response.body = Some(body.into_bytes()),
+      None => ()
+    }
+  }
+
+  match &resource.finalise_response {
+    Some(callback) => {
+      let callback = callback.lock().unwrap();
+      callback.deref()(context);
+    },
+    None => ()
+  }
+
+  debug!("Final response: {:?}", context.response);
 }
 
-fn generate_http_response(context: &WebmachineContext) -> http::Result<Response<Vec<u8>>> {
+fn generate_http_response(context: &WebmachineContext) -> http::Result<Response<hyper::Body>> {
   let mut response = Response::builder().status(context.response.status);
 
   for (header, values) in context.response.headers.clone() {
@@ -972,75 +1097,83 @@ fn generate_http_response(context: &WebmachineContext) -> http::Result<Response<
     response = response.header(&header, &header_values);
   }
   match context.response.body.clone() {
-    Some(body) => response.body(body),
-    None => response.body(vec![])
+    Some(body) => response.body(body.into()),
+    None => response.body(Body::empty())
   }
 }
 
 /// The main hyper dispatcher
-pub struct WebmachineDispatcher {
-    /// Map of routes to webmachine resources
-    pub routes: Mutex<BTreeMap<String, Arc<WebmachineResource>>>
+#[derive(Clone)]
+pub struct WebmachineDispatcher<'a> {
+  /// Map of routes to webmachine resources
+  pub routes: BTreeMap<&'a str, WebmachineResource<'a>>
 }
 
-impl WebmachineDispatcher {
-    /// Create a new Webmachine dispatcher given a map of routes to webmachine resources
-    pub fn new(routes: BTreeMap<String, Arc<WebmachineResource>>) -> WebmachineDispatcher {
-        WebmachineDispatcher {
-            routes: Mutex::new(routes.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+impl <'a> WebmachineDispatcher<'a> {
+  /// Main dispatch function for the Webmachine. This will look for a matching resource
+  /// based on the request path. If one is not found, a 404 Not Found response is returned
+  pub async fn dispatch(self, req: Request<hyper::Body>) -> http::Result<Response<hyper::Body>> {
+    let mut context = self.context_from_http_request(req).await;
+    self.dispatch_to_resource(&mut context);
+    generate_http_response(&context)
+  }
+
+  async fn context_from_http_request(&self, req: Request<hyper::Body>) -> WebmachineContext {
+    let request = request_from_http_request(req).await;
+    WebmachineContext {
+      request,
+      response: WebmachineResponse::default(),
+      .. WebmachineContext::default()
+    }
+  }
+
+  fn match_paths(&self, request: &WebmachineRequest) -> Vec<String> {
+    let request_path = sanitise_path(&request.request_path);
+    self.routes
+      .keys()
+      .filter(|k| request_path.starts_with(&sanitise_path(k)))
+      .map(|k| k.to_string())
+      .collect()
+  }
+
+  fn lookup_resource(&self, path: &str) -> Option<&WebmachineResource<'a>> {
+    self.routes.get(path)
+  }
+
+  /// Dispatches to the matching webmachine resource. If there is no matching resource, returns
+  /// 404 Not Found response
+  pub fn dispatch_to_resource(&self, context: &mut WebmachineContext) {
+    let matching_paths = self.match_paths(&context.request);
+    let ordered_by_length: Vec<String> = matching_paths.iter()
+      .cloned()
+      .sorted_by(|a, b| Ord::cmp(&b.len(), &a.len())).collect();
+    match ordered_by_length.first() {
+      Some(path) => {
+        update_paths_for_resource(&mut context.request, path);
+        if let Some(resource) = self.lookup_resource(path) {
+          execute_state_machine(context, &resource);
+          finalise_response(context, &resource);
+        } else {
+          context.response.status = 404;
         }
-    }
+      },
+      None => context.response.status = 404
+    };
+  }
+}
 
-    /// Main dispatch function for the Webmachine. This will look for a matching resource
-    /// based on the request path. If one is not found, a 404 Not Found response is returned
-    pub fn dispatch(&self, req: Request<Vec<u8>>) -> http::Result<Response<Vec<u8>>> {
-      let mut context = self.context_from_http_request(&req);
-      self.dispatch_to_resource(&mut context);
-      generate_http_response(&context)
-    }
+impl Service<Request<hyper::Body>> for WebmachineDispatcher<'static> {
+  type Response = Response<hyper::Body>;
+  type Error = http::Error;
+  type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn context_from_http_request(&self, req: &Request<Vec<u8>>) -> WebmachineContext {
-      let request = request_from_http_request(req);
-      WebmachineContext {
-        request,
-        response: WebmachineResponse::default(),
-        .. WebmachineContext::default()
-      }
-    }
+  fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    Poll::Ready(Ok(()))
+  }
 
-    fn match_paths(&self, request: &WebmachineRequest) -> Vec<String> {
-        let request_path = sanitise_path(&request.request_path);
-        let routes = self.routes.lock().unwrap();
-        routes
-            .keys()
-            .cloned()
-            .filter(|k| request_path.starts_with(&sanitise_path(k)))
-            .collect()
-    }
-
-    fn lookup_resource(&self, path: &String) -> Arc<WebmachineResource> {
-        let routes = self.routes.lock().unwrap();
-        let resource = routes.get(path).unwrap();
-        resource.clone()
-    }
-
-    /// Dispatches to the matching webmachine resource. If there is no matching resource, returns
-    /// 404 Not Found response
-    pub fn dispatch_to_resource(&self, context: &mut WebmachineContext) {
-        let matching_paths = self.match_paths(&context.request);
-        let ordered_by_length: Vec<String> = matching_paths.iter()
-            .cloned()
-            .sorted_by(|a, b| Ord::cmp(&b.len(), &a.len())).collect();
-        match ordered_by_length.first() {
-            Some(path) => {
-                update_paths_for_resource(&mut context.request, path);
-                let resource = self.lookup_resource(path);
-                execute_state_machine(context, &resource);
-                finalise_response(context, &resource);
-            },
-            None => context.response.status = 404
-        };
-    }
+  fn call(&mut self, req: Request<hyper::Body>) -> Self::Future {
+    Box::pin(self.clone().dispatch(req))
+  }
 }
 
 #[cfg(test)]
