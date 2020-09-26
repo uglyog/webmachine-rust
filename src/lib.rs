@@ -124,17 +124,14 @@ use itertools::Itertools;
 use chrono::{DateTime, FixedOffset, Utc};
 use context::{WebmachineContext, WebmachineResponse, WebmachineRequest};
 use headers::HeaderValue;
-use http::{Request, Response, StatusCode};
+use http::{Request, Response};
 use hyper::service::Service;
 use std::task::{Context, Poll};
 use std::pin::Pin;
 use std::future::Future;
-use hyper::server::conn::AddrStream;
 use http::request::Parts;
 use futures::TryStreamExt;
 use hyper::Body;
-use std::rc::Rc;
-use std::borrow::Borrow;
 use std::ops::Deref;
 
 #[macro_use] pub mod headers;
@@ -1138,7 +1135,7 @@ impl Service<Request<hyper::Body>> for WebmachineDispatcher<'static> {
   type Error = http::Error;
   type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-  fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+  fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
     Poll::Ready(Ok(()))
   }
 

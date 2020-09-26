@@ -11,7 +11,6 @@ use super::context::*;
 use super::headers::*;
 use expectest::prelude::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 use chrono::*;
 
 fn resource(path: &str) -> WebmachineRequest {
