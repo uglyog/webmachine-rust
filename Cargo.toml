@@ -1,6 +1,6 @@
 [package]
 name = "webmachine-rust"
-version = "0.1.1"
+version = "0.2.0"
 authors = ["Ronald Holshausen <uglyog@gmail.com>"]
 description = "Port of the Ruby Webmachine library to Rust"
 documentation = "http://www.pact.io/reference/rust/webmachine-rust-0.1.0/webmachine_rust/"
