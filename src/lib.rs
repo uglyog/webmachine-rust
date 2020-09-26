@@ -10,7 +10,7 @@ It is basically a HTTP toolkit for building HTTP-friendly applications using the
 Webmachine-rust works with Hyper and sits between the Hyper Handler and your application code. It provides a resource struct
 with callbacks to handle the decisions required as the state machine is executed against the request with the following sequence.
 
-REQUEST -> Hyper Handler -> WebmachineDispatcher -> WebmachineResource -> Your application -> WebmachineResponse -> Hyper -> RESPONSE
+REQUEST -> Hyper Handler -> WebmachineDispatcher -> WebmachineResource -> Your application code -> WebmachineResponse -> Hyper -> RESPONSE
 
 ## Features
 
@@ -28,101 +28,80 @@ Currently, the following features from webmachine-ruby have not been implemented
 
 This implementation has the following deficiencies:
 
-- Only supports Hyper
-- WebmachineDispatcher and WebmachineResource are not shareable between threads.
 - Automatically decoding request bodies and encoding response bodies.
 - No easy mechanism to generate bodies with different content types (e.g. JSON vs. XML).
 - No easy mechanism for handling sub-paths in a resource.
-- Does not work with keep alive enabled (does not manage the Hyper thread pool).
 - Dynamically determining the methods allowed on the resource.
-- Compiled against Hyper with all features turned off (no HTTPS).
 
-## Getting started
+## Getting started with Hyper
 
-Follow the getting started documentation from the Hyper crate to setup a Hyper Handler for your server. Then from the
-handle function, you need to define a WebmachineDispatcher that maps resource paths to your webmachine resources (WebmachineResource). Each WebmachineResource defines all the callbacks (via Closures) and values required to implement a
-resource.
+Follow the getting started documentation from the Hyper crate to setup a Hyper service for your server.
+You need to define a WebmachineDispatcher that maps resource paths to your webmachine resources (WebmachineResource).
+Each WebmachineResource defines all the callbacks (via Closures) and values required to implement a resource.
+The WebmachineDispatcher implementes the Hyper Service trait, so you can pass it to the `make_service_fn`.
 
 Note: This example uses the maplit crate to provide the `btreemap` macro and the log crate for the logging macros.
 
-```no_run
-# #[macro_use] extern crate log;
-# #[macro_use] extern crate maplit;
-# extern crate hyper;
-# extern crate webmachine_rust;
-# extern crate serde_json;
- use std::sync::Arc;
- use hyper::server::{Handler, Server, Request, Response};
+ ```no_run
+ # #[macro_use] extern crate log;
+ # #[macro_use] extern crate maplit;
+ # #[macro_use] extern crate lazy_static;
+ # extern crate hyper;
+ # extern crate webmachine_rust;
+ # extern crate serde_json;
+ use hyper::server::Server;
  use webmachine_rust::*;
  use webmachine_rust::context::*;
  use webmachine_rust::headers::*;
  use serde_json::{Value, json};
  use std::io::Read;
+ use std::net::SocketAddr;
+ use hyper::service::make_service_fn;
+ use std::convert::Infallible;
 
- # fn main() { }
+ # fn main() {}
+ // setup the dispatcher, which maps paths to resources. The requirement of make_service_fn is
+ // that it has a static lifetime, so we can use lazy_static for that
+ lazy_static!{
+   static ref DISPATCHER: WebmachineDispatcher<'static> = WebmachineDispatcher {
+     routes: btreemap!{
+        "/myresource" => WebmachineResource {
+          // Methods allowed on this resource
+          allowed_methods: vec!["OPTIONS", "GET", "HEAD", "POST"],
+          // if the resource exists callback
+          resource_exists: callback(&|context| true),
+          // callback to render the response for the resource
+          render_response: callback(&|_| {
+              let json_response = json!({
+                 "data": [1, 2, 3, 4]
+              });
+              Some(json_response.to_string())
+          }),
+          // callback to process the post for the resource
+          process_post: callback(&|context|  /* Handle the post here */ Ok(true) ),
+          // default everything else
+          .. WebmachineResource::default()
+        }
+    }
+   };
+ }
 
- // fn from_hyper(req: &mut Request) -> http::Request<Vec<u8>> {
- //  let mut request = http::Request::builder()
- //    .uri(req.uri.to_string())
- //    .method(req.method.as_ref());
- //  for header in req.headers.iter() {
- //    request = request.header(header.name(), header.value_string());
- //  }
- //  let mut buffer = Vec::new();
- //  req.read_to_end(&mut buffer);
- //  request.body(buffer.clone()).unwrap()
- // }
- //
- // struct ServerHandler {
- // }
- //
- // impl Handler for ServerHandler {
- //
- //     fn handle(&self, mut req: Request, res: Response) {
- //         // setup the dispatcher, which maps paths to resources
- //         let dispatcher = WebmachineDispatcher::new(
- //             btreemap!{
- //                 "/myresource".to_string() => Arc::new(WebmachineResource {
- //                     // Methods allowed on this resource
- //                     allowed_methods: vec!["OPTIONS".to_string(), "GET".to_string(),
- //                        "HEAD".to_string(), "POST".to_string()],
- //                     // if the resource exists callback
- //                     resource_exists: Box::new(|context| true),
- //                     // callback to render the response for the resource
- //                     render_response: Box::new(|_| {
- //                         let json_response = json!({
- //                            "data": [1, 2, 3, 4]
- //                         });
- //                         Some(json_response.to_string())
- //                     }),
- //                     // callback to process the post for the resource
- //                     process_post: Box::new(|context|  /* Handle the post here */ Ok(true) ),
- //                     // default everything else
- //                     .. WebmachineResource::default()
- //                 })
- //             }
- //         );
- //         // then dispatch the request to the web machine.
- //         match dispatcher.dispatch(from_hyper(&mut req)) {
- //             Ok(res) => (),
- //             Err(err) => warn!("Error generating response - {}", err)
- //         };
- //     }
- // }
- //
- // pub fn start_server() {
- //     match Server::http(format!("0.0.0.0:0").as_str()) {
- //         Ok(mut server) => {
- //             // It is important to turn keep alive off
- //             server.keep_alive(None);
- //             server.handle(ServerHandler {});
- //         },
- //         Err(err) => {
- //             error!("could not start server: {}", err);
- //         }
- //     }
- // }
-```
+ async fn start_server() -> Result<(), String> {
+   // Create a Hyper server that delegates to the dispatcher
+   let addr = "0.0.0.0:8080".parse().unwrap();
+   let make_svc = make_service_fn(|_| async { Ok::<_, Infallible>(DISPATCHER.clone()) });
+   match Server::try_bind(&addr) {
+     Ok(server) => {
+       // start the actual server
+       server.serve(make_svc).await;
+     },
+     Err(err) => {
+       error!("could not start server: {}", err);
+     }
+   };
+   Ok(())
+ }
+ ```
 
 ## Example implementations
 
