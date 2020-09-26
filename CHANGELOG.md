@@ -1,5 +1,14 @@
 # 0.0.0 - Initial Version
 
+# 0.2.0 - Thread-safe async version based on Hyper 0.13
+
+* 07020b2 - chore: bump version (Ronald Holshausen, Sat Sep 26 16:30:07 2020 +1000)
+* a4b4535 - chore: cleanup warnings (Ronald Holshausen, Sat Sep 26 16:29:30 2020 +1000)
+* edc9b80 - feat: pass the resource to all callbacks (Ronald Holshausen, Sat Sep 26 16:27:15 2020 +1000)
+* 5a0554f - chore: update rust docs (Ronald Holshausen, Sat Sep 26 16:13:54 2020 +1000)
+* bec99a8 - feat: support callbacks usable across threads (Ronald Holshausen, Sat Sep 26 15:18:02 2020 +1000)
+* ac10295 - bump version to 0.1.1 (Ronald Holshausen, Thu Sep 24 12:30:11 2020 +1000)
+
 # 0.1.0 - Update to Rust 2018 + updated crates + handle query parameters
 
 * 4bc1048 - feat: query parameter support was missing (Ronald Holshausen, Thu Sep 24 11:58:13 2020 +1000)
