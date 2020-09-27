@@ -795,28 +795,28 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
     if loop_count >= MAX_STATE_MACHINE_TRANSITIONS {
       panic!("State machine has not terminated within {} transitions!", loop_count);
     }
-    debug!("state is {:?}", state);
+    trace!("state is {:?}", state);
     state = match TRANSITION_MAP.get(&state) {
       Some(transition) => match transition {
         &Transition::To(ref decision) => {
-          debug!("Transitioning to {:?}", decision);
+          trace!("Transitioning to {:?}", decision);
           decision.clone()
         },
         &Transition::Branch(ref decision_true, ref decision_false) => {
           match execute_decision(&state, context, resource) {
             DecisionResult::True => {
-              debug!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
+              trace!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
               decisions.push((state, true, decision_true.clone()));
               decision_true.clone()
             },
             DecisionResult::False => {
-              debug!("Transitioning from {:?} to {:?} as decision is false", state, decision_false);
+              trace!("Transitioning from {:?} to {:?} as decision is false", state, decision_false);
               decisions.push((state, false, decision_false.clone()));
               decision_false.clone()
             },
             DecisionResult::StatusCode(code) => {
               let decision = Decision::End(code);
-              debug!("Transitioning from {:?} to {:?} as decision is a status code", state, decision);
+              trace!("Transitioning from {:?} to {:?} as decision is a status code", state, decision);
               decisions.push((state, false, decision.clone()));
               decision.clone()
             }
@@ -824,13 +824,13 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
         }
       },
       None => {
-        error!("Error transitioning from {:?}, the TRANSITION_MAP is misconfigured", state);
+        error!("Error transitioning from {:?}, the TRANSITION_MAP is mis-configured", state);
         decisions.push((state, false, Decision::End(500)));
         Decision::End(500)
       }
     }
   }
-  debug!("Final state is {:?}", state);
+  trace!("Final state is {:?}", state);
   match state {
     Decision::End(status) => context.response.status = status,
     Decision::A3Options => {
