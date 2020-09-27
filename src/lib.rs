@@ -419,25 +419,25 @@ impl Decision {
 }
 
 enum Transition {
-    To(Decision),
-    Branch(Decision, Decision)
+  To(Decision),
+  Branch(Decision, Decision)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum DecisionResult {
-    True,
-    False,
-    StatusCode(u16)
+  True(String),
+  False(String),
+  StatusCode(u16)
 }
 
 impl DecisionResult {
-    fn wrap(result: bool) -> DecisionResult {
-        if result {
-            DecisionResult::True
-        } else {
-            DecisionResult::False
-        }
+  fn wrap(result: bool, reason: &str) -> DecisionResult {
+    if result {
+      DecisionResult::True(format!("is: {}", reason))
+    } else {
+      DecisionResult::False(format!("is not: {}", reason))
     }
+  }
 }
 
 lazy_static! {
@@ -552,164 +552,182 @@ fn execute_decision(
     Decision::B10MethodAllowed => {
       match resource.allowed_methods
         .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()) {
-        Some(_) => DecisionResult::True,
+        Some(_) => DecisionResult::True("method is in the list of allowed methods".to_string()),
         None => {
           context.response.add_header("Allow", resource.allowed_methods
             .iter()
             .cloned()
             .map(HeaderValue::basic)
             .collect());
-          DecisionResult::False
+          DecisionResult::False("method is not in the list of allowed methods".to_string())
         }
       }
     },
     Decision::B11UriTooLong => {
       let callback = resource.uri_too_long.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "URI too long")
     },
     Decision::B12KnownMethod => DecisionResult::wrap(resource.known_methods
-      .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some()),
+      .iter().find(|m| m.to_uppercase() == context.request.method.to_uppercase()).is_some(),
+      "known method"),
     Decision::B13Available => {
       let callback = resource.available.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "available")
     },
     Decision::B9MalformedRequest => {
       let callback = resource.malformed_request.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "malformed request")
     },
     Decision::B8Authorized => {
       let callback = resource.not_authorized.lock().unwrap();
       match callback.deref()(context, resource) {
         Some(realm) => {
           context.response.add_header("WWW-Authenticate", vec![HeaderValue::parse_string(realm.as_str())]);
-          DecisionResult::False
+          DecisionResult::False("is not authorized".to_string())
         },
-        None => DecisionResult::True
+        None => DecisionResult::True("is not authorized".to_string())
       }
     },
     Decision::B7Forbidden => {
       let callback = resource.forbidden.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "forbidden")
     },
     Decision::B6UnsupportedContentHeader => {
       let callback = resource.unsupported_content_headers.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "unsupported content headers")
     },
     Decision::B5UnknownContentType => {
       DecisionResult::wrap(context.request.is_put_or_post() && resource.acceptable_content_types
         .iter().find(|ct| context.request.content_type().to_uppercase() == ct.to_uppercase() )
-        .is_none())
+        .is_none(), "acceptable content types")
     },
     Decision::B4RequestEntityTooLarge => {
       let callback = resource.valid_entity_length.lock().unwrap();
-      DecisionResult::wrap(context.request.is_put_or_post() && !callback.deref()(context, resource))
+      DecisionResult::wrap(context.request.is_put_or_post() && !callback.deref()(context, resource),
+        "valid entity length")
     },
-    Decision::B3Options => DecisionResult::wrap(context.request.is_options()),
-    Decision::C3AcceptExists => DecisionResult::wrap(context.request.has_accept_header()),
+    Decision::B3Options => DecisionResult::wrap(context.request.is_options(), "options"),
+    Decision::C3AcceptExists => DecisionResult::wrap(context.request.has_accept_header(), "has accept header"),
     Decision::C4AcceptableMediaTypeAvailable => match content_negotiation::matching_content_type(resource, &context.request) {
       Some(media_type) => {
         context.selected_media_type = Some(media_type);
-        DecisionResult::True
+        DecisionResult::True("acceptable media type is available".to_string())
       },
-      None => DecisionResult::False
+      None => DecisionResult::False("acceptable media type is not available".to_string())
     },
-    Decision::D4AcceptLanguageExists => DecisionResult::wrap(context.request.has_accept_language_header()),
+    Decision::D4AcceptLanguageExists => DecisionResult::wrap(context.request.has_accept_language_header(),
+                                                             "has accept language header"),
     Decision::D5AcceptableLanguageAvailable => match content_negotiation::matching_language(resource, &context.request) {
       Some(language) => {
         if language != "*" {
           context.selected_language = Some(language.clone());
           context.response.add_header("Content-Language", vec![HeaderValue::parse_string(&language)]);
         }
-        DecisionResult::True
+        DecisionResult::True("acceptable language is available".to_string())
       },
-      None => DecisionResult::False
+      None => DecisionResult::False("acceptable language is not available".to_string())
     },
-    Decision::E5AcceptCharsetExists => DecisionResult::wrap(context.request.has_accept_charset_header()),
+    Decision::E5AcceptCharsetExists => DecisionResult::wrap(context.request.has_accept_charset_header(),
+                                                            "accept charset exists"),
     Decision::E6AcceptableCharsetAvailable => match content_negotiation::matching_charset(resource, &context.request) {
       Some(charset) => {
         if charset != "*" {
             context.selected_charset = Some(charset.clone());
         }
-        DecisionResult::True
+        DecisionResult::True("acceptable charset is available".to_string())
       },
-      None => DecisionResult::False
+      None => DecisionResult::False("acceptable charset is not available".to_string())
     },
-    Decision::F6AcceptEncodingExists => DecisionResult::wrap(context.request.has_accept_encoding_header()),
+    Decision::F6AcceptEncodingExists => DecisionResult::wrap(context.request.has_accept_encoding_header(),
+                                                             "accept encoding exists"),
     Decision::F7AcceptableEncodingAvailable => match content_negotiation::matching_encoding(resource, &context.request) {
       Some(encoding) => {
         context.selected_encoding = Some(encoding.clone());
         if encoding != "identity" {
             context.response.add_header("Content-Encoding", vec![HeaderValue::parse_string(&encoding)]);
         }
-        DecisionResult::True
+        DecisionResult::True("acceptable encoding is available".to_string())
       },
-      None => DecisionResult::False
+      None => DecisionResult::False("acceptable encoding is not available".to_string())
     },
     Decision::G7ResourceExists => {
       let callback = resource.resource_exists.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "resource exists")
     },
-    Decision::G8IfMatchExists => DecisionResult::wrap(context.request.has_header("If-Match")),
+    Decision::G8IfMatchExists => DecisionResult::wrap(context.request.has_header("If-Match"),
+                                                      "match exists"),
     Decision::G9IfMatchStarExists | &Decision::H7IfMatchStarExists => DecisionResult::wrap(
-        context.request.has_header_value("If-Match", "*")),
-    Decision::G11EtagInIfMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-Match")),
-    Decision::H10IfUnmodifiedSinceExists => DecisionResult::wrap(context.request.has_header("If-Unmodified-Since")),
-    Decision::H11IfUnmodifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request, "If-Unmodified-Since", &mut context.if_unmodified_since)),
+        context.request.has_header_value("If-Match", "*"), "match star exists"),
+    Decision::G11EtagInIfMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-Match"),
+                                                       "etag in if match"),
+    Decision::H10IfUnmodifiedSinceExists => DecisionResult::wrap(context.request.has_header("If-Unmodified-Since"),
+                                                                 "unmodified since exists"),
+    Decision::H11IfUnmodifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request, "If-Unmodified-Since", &mut context.if_unmodified_since),
+                                                                "unmodified since valid"),
     Decision::H12LastModifiedGreaterThanUMS => {
       match context.if_unmodified_since {
         Some(unmodified_since) => {
           let callback = resource.last_modified.lock().unwrap();
           match callback.deref()(context, resource) {
-            Some(datetime) => DecisionResult::wrap(datetime > unmodified_since),
-            None => DecisionResult::False
+            Some(datetime) => DecisionResult::wrap(datetime > unmodified_since,
+                                                   "resource last modified date is greater than unmodified since"),
+            None => DecisionResult::False("resource has no last modified date".to_string())
           }
         },
-        None => DecisionResult::False
+        None => DecisionResult::False("resource does not provide last modified date".to_string())
       }
     },
     Decision::I7Put => if context.request.is_put() {
       context.new_resource = true;
-      DecisionResult::True
+      DecisionResult::True("is a PUT request".to_string())
     } else {
-      DecisionResult::False
+      DecisionResult::False("is not a PUT request".to_string())
     },
-    Decision::I12IfNoneMatchExists => DecisionResult::wrap(context.request.has_header("If-None-Match")),
-    Decision::I13IfNoneMatchStarExists => DecisionResult::wrap(context.request.has_header_value("If-None-Match", "*")),
-    Decision::J18GetHead => DecisionResult::wrap(context.request.is_get_or_head()),
+    Decision::I12IfNoneMatchExists => DecisionResult::wrap(context.request.has_header("If-None-Match"),
+                                                           "none match exists"),
+    Decision::I13IfNoneMatchStarExists => DecisionResult::wrap(context.request.has_header_value("If-None-Match", "*"),
+                                                               "none match star exists"),
+    Decision::J18GetHead => DecisionResult::wrap(context.request.is_get_or_head(),
+                                                 "is GET or HEAD request"),
     Decision::K7ResourcePreviouslyExisted => {
       let callback = resource.previously_existed.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "resource previously existed")
     },
-    Decision::K13ETagInIfNoneMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-None-Match")),
+    Decision::K13ETagInIfNoneMatch => DecisionResult::wrap(resource_etag_matches_header_values(resource, context, "If-None-Match"),
+                                                           "ETag in if none match"),
     Decision::L5HasMovedTemporarily => {
       let callback = resource.moved_temporarily.lock().unwrap();
       match callback.deref()(context, resource) {
         Some(location) => {
           context.response.add_header("Location", vec![HeaderValue::basic(&location)]);
-          DecisionResult::True
+          DecisionResult::True("resource has moved temporarily".to_string())
         },
-        None => DecisionResult::False
+        None => DecisionResult::False("resource has not moved temporarily".to_string())
       }
     },
-    Decision::L7Post | &Decision::M5Post | &Decision::N16Post => DecisionResult::wrap(context.request.is_post()),
-    Decision::L13IfModifiedSinceExists => DecisionResult::wrap(context.request.has_header("If-Modified-Since")),
+    Decision::L7Post | &Decision::M5Post | &Decision::N16Post => DecisionResult::wrap(context.request.is_post(),
+                                                                                      "a POST request"),
+    Decision::L13IfModifiedSinceExists => DecisionResult::wrap(context.request.has_header("If-Modified-Since"),
+                                                               "if modified since exists"),
     Decision::L14IfModifiedSinceValid => DecisionResult::wrap(validate_header_date(&context.request,
-        "If-Modified-Since", &mut context.if_modified_since)),
+        "If-Modified-Since", &mut context.if_modified_since), "modified since valid"),
     Decision::L15IfModifiedSinceGreaterThanNow => {
         let datetime = context.if_modified_since.unwrap();
         let timezone = datetime.timezone();
-        DecisionResult::wrap(datetime > Utc::now().with_timezone(&timezone))
+        DecisionResult::wrap(datetime > Utc::now().with_timezone(&timezone),
+                             "modified since greater than now")
     },
     Decision::L17IfLastModifiedGreaterThanMS => {
       match context.if_modified_since {
         Some(unmodified_since) => {
           let callback = resource.last_modified.lock().unwrap();
           match callback.deref()(context, resource) {
-            Some(datetime) => DecisionResult::wrap(datetime > unmodified_since),
-            None => DecisionResult::False
+            Some(datetime) => DecisionResult::wrap(datetime > unmodified_since,
+                                                   "last modified greater than modified since"),
+            None => DecisionResult::False("resource has no last modified date".to_string())
           }
         },
-        None => DecisionResult::False
+        None => DecisionResult::False("resource does not return if_modified_since".to_string())
       }
     },
     Decision::I4HasMovedPermanently | &Decision::K5HasMovedPermanently => {
@@ -717,25 +735,26 @@ fn execute_decision(
       match callback.deref()(context, resource) {
         Some(location) => {
           context.response.add_header("Location", vec![HeaderValue::basic(&location)]);
-          DecisionResult::True
+          DecisionResult::True("resource has moved permanently".to_string())
         },
-        None => DecisionResult::False
+        None => DecisionResult::False("resource has not moved permanently".to_string())
       }
     },
     Decision::M7PostToMissingResource | &Decision::N5PostToMissingResource => {
       let callback = resource.allow_missing_post.lock().unwrap();
       if callback.deref()(context, resource) {
         context.new_resource = true;
-        DecisionResult::True
+        DecisionResult::True("resource allows POST to missing resource".to_string())
       } else {
-        DecisionResult::False
+        DecisionResult::False("resource does not allow POST to missing resource".to_string())
       }
     },
-    Decision::M16Delete => DecisionResult::wrap(context.request.is_delete()),
+    Decision::M16Delete => DecisionResult::wrap(context.request.is_delete(),
+                                                "a DELETE request"),
     Decision::M20DeleteEnacted => {
       let callback = resource.delete_resource.lock().unwrap();
       match callback.deref()(context, resource) {
-        Ok(result) => DecisionResult::wrap(result),
+        Ok(result) => DecisionResult::wrap(result, "resource DELETE succeeded"),
         Err(status) => DecisionResult::StatusCode(status)
       }
     },
@@ -749,40 +768,40 @@ fn execute_decision(
             let new_path = join_paths(&base_path, &sanitise_path(&path));
             context.request.request_path = path.clone();
             context.response.add_header("Location", vec![HeaderValue::basic(&new_path)]);
-            DecisionResult::wrap(context.redirect)
+            DecisionResult::wrap(context.redirect, "should redirect")
           },
           Err(status) => DecisionResult::StatusCode(status)
         }
       } else {
         let callback = resource.process_post.lock().unwrap();
         match callback.deref()(context, resource) {
-          Ok(_) => DecisionResult::wrap(context.redirect),
+          Ok(_) => DecisionResult::wrap(context.redirect, "processing POST succeeded"),
           Err(status) => DecisionResult::StatusCode(status)
         }
       }
     },
     Decision::P3Conflict | &Decision::O14Conflict => {
       let callback = resource.is_conflict.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "resource conflict")
     },
     Decision::P11NewResource => {
       if context.request.is_put() {
         let callback = resource.process_put.lock().unwrap();
         match callback.deref()(context, resource) {
-          Ok(_) => DecisionResult::wrap(context.new_resource),
+          Ok(_) => DecisionResult::wrap(context.new_resource, "process PUT succeeded"),
           Err(status) => DecisionResult::StatusCode(status)
         }
       } else {
-        DecisionResult::wrap(context.new_resource)
+        DecisionResult::wrap(context.new_resource, "new resource creation succeeded")
       }
     },
-    Decision::O16Put => DecisionResult::wrap(context.request.is_put()),
+    Decision::O16Put => DecisionResult::wrap(context.request.is_put(), "a PUT request"),
     Decision::O18MultipleRepresentations => {
       let callback = resource.multiple_choices.lock().unwrap();
-      DecisionResult::wrap(callback.deref()(context, resource))
+      DecisionResult::wrap(callback.deref()(context, resource), "multiple choices exist")
     },
-    Decision::O20ResponseHasBody => DecisionResult::wrap(context.response.has_body()),
-    _ => DecisionResult::False
+    Decision::O20ResponseHasBody => DecisionResult::wrap(context.response.has_body(), "response has a body"),
+    _ => DecisionResult::False("default decision is false".to_string())
   }
 }
 
@@ -804,13 +823,13 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
         },
         &Transition::Branch(ref decision_true, ref decision_false) => {
           match execute_decision(&state, context, resource) {
-            DecisionResult::True => {
-              trace!("Transitioning from {:?} to {:?} as decision is true", state, decision_true);
+            DecisionResult::True(reason) => {
+              trace!("Transitioning from {:?} to {:?} as decision is true -> {}", state, decision_true, reason);
               decisions.push((state, true, decision_true.clone()));
               decision_true.clone()
             },
-            DecisionResult::False => {
-              trace!("Transitioning from {:?} to {:?} as decision is false", state, decision_false);
+            DecisionResult::False(reason) => {
+              trace!("Transitioning from {:?} to {:?} as decision is false -> {}", state, decision_false, reason);
               decisions.push((state, false, decision_false.clone()));
               decision_false.clone()
             },
