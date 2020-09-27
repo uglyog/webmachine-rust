@@ -55,35 +55,35 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
  use std::convert::Infallible;
 
  // setup the dispatcher, which maps paths to resources. The requirement of make_service_fn is
- // that it has a static lifetime, so we can use lazy_static for that
- lazy_static!{
-   static ref DISPATCHER: WebmachineDispatcher<'static> = WebmachineDispatcher {
-     routes: btreemap!{
-        "/myresource" => WebmachineResource {
-          // Methods allowed on this resource
-          allowed_methods: vec!["OPTIONS", "GET", "HEAD", "POST"],
-          // if the resource exists callback
-          resource_exists: callback(&|context| true),
-          // callback to render the response for the resource
-          render_response: callback(&|_| {
-              let json_response = json!({
-                 "data": [1, 2, 3, 4]
-              });
-              Some(json_response.to_string())
-          }),
-          // callback to process the post for the resource
-          process_post: callback(&|context|  /* Handle the post here */ Ok(true) ),
-          // default everything else
-          .. WebmachineResource::default()
-        }
-    }
-   };
+ // that it has a static lifetime
+ fn dispatcher() -> WebmachineDispatcher<'static> {
+   WebmachineDispatcher {
+       routes: btreemap!{
+          "/myresource" => WebmachineResource {
+            // Methods allowed on this resource
+            allowed_methods: vec!["OPTIONS", "GET", "HEAD", "POST"],
+            // if the resource exists callback
+            resource_exists: callback(&|_, _| true),
+            // callback to render the response for the resource
+            render_response: callback(&|_, _| {
+                let json_response = json!({
+                   "data": [1, 2, 3, 4]
+                });
+                Some(json_response.to_string())
+            }),
+            // callback to process the post for the resource
+            process_post: callback(&|_, _|  /* Handle the post here */ Ok(true) ),
+            // default everything else
+            .. WebmachineResource::default()
+          }
+      }
+   }
  }
 
  async fn start_server() -> Result<(), String> {
    // Create a Hyper server that delegates to the dispatcher
    let addr = "0.0.0.0:8080".parse().unwrap();
-   let make_svc = make_service_fn(|_| async { Ok::<_, Infallible>(DISPATCHER.clone()) });
+   let make_svc = make_service_fn(|_| async { Ok::<_, Infallible>(dispatcher()) });
    match Server::try_bind(&addr) {
      Ok(server) => {
        // start the actual server
