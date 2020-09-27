@@ -354,7 +354,7 @@ enum Decision {
     A3Options,
     B3Options,
     B4RequestEntityTooLarge,
-    B5UnkownContentType,
+    B5UnknownContentType,
     B6UnsupportedContentHeader,
     B7Forbidden,
     B8Authorized,
@@ -445,8 +445,8 @@ lazy_static! {
         Decision::Start => Transition::To(Decision::B13Available),
         Decision::B3Options => Transition::Branch(Decision::A3Options, Decision::C3AcceptExists),
         Decision::B4RequestEntityTooLarge => Transition::Branch(Decision::End(413), Decision::B3Options),
-        Decision::B5UnkownContentType => Transition::Branch(Decision::End(415), Decision::B4RequestEntityTooLarge),
-        Decision::B6UnsupportedContentHeader => Transition::Branch(Decision::End(501), Decision::B5UnkownContentType),
+        Decision::B5UnknownContentType => Transition::Branch(Decision::End(415), Decision::B4RequestEntityTooLarge),
+        Decision::B6UnsupportedContentHeader => Transition::Branch(Decision::End(501), Decision::B5UnknownContentType),
         Decision::B7Forbidden => Transition::Branch(Decision::End(403), Decision::B6UnsupportedContentHeader),
         Decision::B8Authorized => Transition::Branch(Decision::B7Forbidden, Decision::End(401)),
         Decision::B9MalformedRequest => Transition::Branch(Decision::End(400), Decision::B8Authorized),
@@ -595,7 +595,7 @@ fn execute_decision(
       let callback = resource.unsupported_content_headers.lock().unwrap();
       DecisionResult::wrap(callback.deref()(context, resource))
     },
-    Decision::B5UnkownContentType => {
+    Decision::B5UnknownContentType => {
       DecisionResult::wrap(context.request.is_put_or_post() && resource.acceptable_content_types
         .iter().find(|ct| context.request.content_type().to_uppercase() == ct.to_uppercase() )
         .is_none())
