@@ -834,7 +834,7 @@ fn execute_state_machine(context: &mut WebmachineContext, resource: &WebmachineR
   match state {
     Decision::End(status) => context.response.status = status,
     Decision::A3Options => {
-      context.response.status = 200;
+      context.response.status = 204;
       let callback = resource.options.lock().unwrap();
       match callback.deref()(context, resource) {
         Some(headers) => context.response.add_headers(headers),

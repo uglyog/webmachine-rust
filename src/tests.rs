@@ -311,7 +311,7 @@ fn execute_state_machine_returns_headers_for_option_request() {
     ..WebmachineResource::default()
   };
   execute_state_machine(&mut context, &resource);
-  expect(context.response.status).to(be_equal_to(200));
+  expect(context.response.status).to(be_equal_to(204));
   expect(context.response.headers.get("A").unwrap().clone()).to(be_equal_to(vec!["B".to_string()]));
   expect(context.response.headers.get("C").unwrap().clone()).to(be_equal_to(vec!["D;E=F".to_string()]));
 }
