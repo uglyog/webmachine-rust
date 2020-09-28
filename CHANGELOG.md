@@ -1,4 +1,4 @@
-# 0.0.0 - Initial Version
+
 
 # 0.2.1 - Small enhancements
 
@@ -32,6 +32,8 @@
 * a907fd9 - Revert "Upgraded hyper to 0.11 and started converting Webmachine to a trait + future based implementation" (Ronald Holshausen, Sun Aug 11 15:41:47 2019 +1000)
 * f23dc71 - chore: added changelog and release script (Ronald Holshausen, Sun Aug 11 15:24:29 2019 +1000)
 * 9c21687 - Upgraded hyper to 0.11 and started converting Webmachine to a trait + future based implementation (Ronald Holshausen, Sat Nov 4 12:33:47 2017 +1100)
+
+# 0.0.0 - Initial Version
 
 * ed8ee7c - add build status badge back to readme (Ronald Holshausen, Sun Jun 26 13:07:41 2016 +1000)
 * b74e643 - update cargo manifest with doc and repo urls (Ronald Holshausen, Sun Jun 26 13:05:40 2016 +1000)
