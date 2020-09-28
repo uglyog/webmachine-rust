@@ -1,5 +1,14 @@
 # 0.0.0 - Initial Version
 
+# 0.2.1 - Small enhancements
+
+* 0d44f1d - chore: record reasons for transitions in the state machine (Ronald Holshausen, Sun Sep 27 18:11:30 2020 +1000)
+* f3968da - fix: OPTIONS response should be a 204 (Ronald Holshausen, Sun Sep 27 17:28:06 2020 +1000)
+* d0cae8a - chore: log out state machine execution at trace level (Ronald Holshausen, Sun Sep 27 17:26:03 2020 +1000)
+* 67d440c - fix: correct spelling (Ronald Holshausen, Sun Sep 27 17:22:38 2020 +1000)
+* ae705c8 - chore: remove lazy_static from example; optmise default callbacks (Ronald Holshausen, Sun Sep 27 17:21:12 2020 +1000)
+* 3adf5d8 - bump version to 0.2.1 (Ronald Holshausen, Sun Sep 27 09:34:46 2020 +1000)
+
 # 0.2.0 - Thread-safe async version based on Hyper 0.13
 
 * 07020b2 - chore: bump version (Ronald Holshausen, Sat Sep 26 16:30:07 2020 +1000)
