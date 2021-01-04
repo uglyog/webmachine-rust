@@ -1,5 +1,11 @@
 
 
+# 0.2.2 - Update crates to latest
+
+* 3d3cfb1 - chore: upgrade crates to latest (including hyper to 0.14) (Ronald Holshausen, Mon Jan 4 11:16:04 2021 +1100)
+* 1dadfa6 - chore: fix changelog (Ronald Holshausen, Mon Sep 28 10:13:56 2020 +1000)
+* a411502 - bump version to 0.2.2 (Ronald Holshausen, Mon Sep 28 10:13:34 2020 +1000)
+
 # 0.2.1 - Small enhancements
 
 * 0d44f1d - chore: record reasons for transitions in the state machine (Ronald Holshausen, Sun Sep 27 18:11:30 2020 +1000)
