@@ -1,6 +1,6 @@
 [package]
 name = "webmachine-rust"
-version = "0.2.3"
+version = "0.3.0"
 authors = ["Ronald Holshausen <uglyog@gmail.com>"]
 description = "Port of the Ruby Webmachine library to Rust"
 documentation = "http://www.pact.io/reference/rust/webmachine-rust-0.1.0/webmachine_rust/"
@@ -9,7 +9,7 @@ repository = "https://github.com/uglyog/webmachine-rust"
 readme = "README.md"
 keywords = ["webmachine"]
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 log = "0.4.8"
