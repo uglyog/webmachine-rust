@@ -1,17 +1,20 @@
+use std::collections::HashMap;
+
+use chrono::*;
+use expectest::prelude::*;
+use maplit::btreemap;
+
 use super::*;
-use super::sanitise_path;
 use super::{
   execute_state_machine,
-  update_paths_for_resource,
-  parse_header_values,
   finalise_response,
   join_paths,
+  parse_header_values,
+  update_paths_for_resource,
 };
 use super::context::*;
 use super::headers::*;
-use expectest::prelude::*;
-use std::collections::HashMap;
-use chrono::*;
+use super::sanitise_path;
 
 fn resource(path: &str) -> WebmachineRequest {
   WebmachineRequest {
@@ -713,7 +716,8 @@ fn execute_state_machine_returns_412_if_the_resource_etag_does_not_match_if_matc
 
 #[test]
 fn execute_state_machine_returns_412_if_the_resource_last_modified_gt_unmodified_since() {
-  let datetime = Local::now().with_timezone(&FixedOffset::east(10 * 3600));
+  let offset = FixedOffset::east_opt(10 * 3600).expect("FixedOffset::east out of bounds");
+  let datetime = Local::now().with_timezone(&offset);
   let header_datetime = datetime.clone() - Duration::minutes(5);
   let mut context = WebmachineContext {
     request: WebmachineRequest {
@@ -726,7 +730,10 @@ fn execute_state_machine_returns_412_if_the_resource_last_modified_gt_unmodified
   };
   let resource = WebmachineResource {
     resource_exists: callback(&|_, _| true),
-    last_modified: callback(&|_, _| Some(Local::now().with_timezone(&FixedOffset::east(10 * 3600)))),
+    last_modified: callback(&|_, _| {
+      let fixed_offset = FixedOffset::east_opt(10 * 3600).expect("FixedOffset::east out of bounds");
+      Some(Local::now().with_timezone(&fixed_offset))
+    }),
     ..WebmachineResource::default()
   };
 
@@ -821,7 +828,8 @@ fn execute_state_machine_returns_304_if_resource_etag_in_if_non_match_and_is_a_h
 
 #[test]
 fn execute_state_machine_returns_304_if_the_resource_last_modified_gt_modified_since() {
-  let datetime = Local::now().with_timezone(&FixedOffset::east(10 * 3600)) - Duration::minutes(15);
+  let offset = FixedOffset::east_opt(10 * 3600).expect("FixedOffset::east out of bounds");
+  let datetime = Local::now().with_timezone(&offset) - Duration::minutes(15);
   let header_datetime = datetime + Duration::minutes(5);
   let mut context = WebmachineContext {
     request: WebmachineRequest {
@@ -834,7 +842,10 @@ fn execute_state_machine_returns_304_if_the_resource_last_modified_gt_modified_s
   };
   let resource = WebmachineResource {
     resource_exists: callback(&|_, _| true),
-    last_modified: callback(&|_, _| Some(Local::now().with_timezone(&FixedOffset::east(10 * 3600)) - Duration::minutes(15))),
+    last_modified: callback(&|_, _| {
+      let offset = FixedOffset::east_opt(10 * 3600).expect("FixedOffset::east out of bounds");
+      Some(Local::now().with_timezone(&offset) - Duration::minutes(15))
+    }),
     ..WebmachineResource::default()
   };
   execute_state_machine(&mut context, &resource);

@@ -1,9 +1,10 @@
 //! The `headers` deals with parsing and formatting request and response headers
 
 use std::collections::HashMap;
-use std::str::Chars;
-use std::iter::Peekable;
 use std::hash::{Hash, Hasher};
+use std::iter::Peekable;
+use std::str::Chars;
+
 use itertools::Itertools;
 
 const SEPERATORS: [char; 10] = ['(', ')', '<', '>', '@', ',', ';', '=', '{', '}'];
@@ -231,10 +232,12 @@ macro_rules! h {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use expectest::prelude::*;
+  use expectest::prelude::*;
+  use maplit::hashmap;
 
-    #[test]
+  use super::*;
+
+  #[test]
     fn parse_header_value_test() {
         expect!(HeaderValue::parse_string("")).to(be_equal_to("".to_string()));
         expect!(HeaderValue::parse_string("A B")).to(be_equal_to("A B".to_string()));

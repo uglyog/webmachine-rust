@@ -1,10 +1,13 @@
 //! The `context` module encapsulates the context of the environment that the webmachine is
 //! executing in. Basically wraps the request and response.
 
-use std::collections::{HashMap, BTreeMap};
-use crate::headers::HeaderValue;
+use std::collections::{BTreeMap, HashMap};
+
 use chrono::{DateTime, FixedOffset};
+use maplit::hashmap;
 use itertools::Itertools;
+
+use crate::headers::HeaderValue;
 
 /// Request that the state machine is executing against
 #[derive(Debug, Clone, PartialEq)]
@@ -263,9 +266,11 @@ impl Default for WebmachineContext {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use crate::headers::*;
   use expectest::prelude::*;
+
+  use crate::headers::*;
+
+  use super::*;
 
   #[test]
   fn request_does_not_have_header_test() {

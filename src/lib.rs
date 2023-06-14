@@ -43,11 +43,6 @@ The WebmachineDispatcher implementes the Hyper Service trait, so you can pass it
 Note: This example uses the maplit crate to provide the `btreemap` macro and the log crate for the logging macros.
 
  ```no_run
- # #[macro_use] extern crate log;
- # #[macro_use] extern crate maplit;
- # extern crate hyper;
- # extern crate webmachine_rust;
- # extern crate serde_json;
  use hyper::server::Server;
  use webmachine_rust::*;
  use webmachine_rust::context::*;
@@ -57,6 +52,8 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
  use std::net::SocketAddr;
  use hyper::service::make_service_fn;
  use std::convert::Infallible;
+ use maplit::btreemap;
+ use tracing::error;
 
  # fn main() {}
  // setup the dispatcher, which maps paths to resources. The requirement of make_service_fn is
@@ -109,29 +106,27 @@ For an example of a project using this crate, have a look at the [Pact Mock Serv
 
 #![warn(missing_docs)]
 
-#[macro_use] extern crate log;
-#[macro_use] extern crate maplit;
-extern crate itertools;
-#[macro_use] extern crate lazy_static;
-extern crate chrono;
-extern crate http;
-
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
-use std::sync::Arc;
-use itertools::Itertools;
-use chrono::{DateTime, FixedOffset, Utc};
-use context::{WebmachineContext, WebmachineResponse, WebmachineRequest};
-use headers::HeaderValue;
-use http::{Request, Response};
-use hyper::service::Service;
-use std::task::{Context, Poll};
-use std::pin::Pin;
 use std::future::Future;
-use http::request::Parts;
-use futures::TryStreamExt;
-use hyper::Body;
 use std::ops::Deref;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::task::{Context, Poll};
+
+use chrono::{DateTime, FixedOffset, Utc};
+use futures::TryStreamExt;
+use http::{Request, Response};
+use http::request::Parts;
+use hyper::Body;
+use hyper::service::Service;
+use itertools::Itertools;
+use lazy_static::lazy_static;
+use maplit::hashmap;
+use tracing::{debug, error, trace};
+
+use context::{WebmachineContext, WebmachineRequest, WebmachineResponse};
+use headers::HeaderValue;
 
 #[macro_use] pub mod headers;
 pub mod context;
