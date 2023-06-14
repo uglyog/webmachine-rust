@@ -1,5 +1,11 @@
 
 
+# 0.3.0 - update to Rust 2021 edition + switch to using the tracing crate
+
+* 0b9c91d - chore: switch to using the tracing crate (Ronald Holshausen, Wed Jun 14 10:19:49 2023 +1000)
+* e5b7dcf - chore: Bump version and update to Rust 2021 edition (Ronald Holshausen, Wed Jun 14 10:05:08 2023 +1000)
+* 6cafea1 - bump version to 0.2.3 (Ronald Holshausen, Mon Jan 4 11:20:40 2021 +1100)
+
 # 0.2.2 - Update crates to latest
 
 * 3d3cfb1 - chore: upgrade crates to latest (including hyper to 0.14) (Ronald Holshausen, Mon Jan 4 11:16:04 2021 +1100)
