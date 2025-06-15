@@ -1,5 +1,10 @@
 
 
+# 0.6.2 - Bugfix Release
+
+* 7ab7313 - fix: Resource path was incorrectly calculated from the base path (Ronald Holshausen, Fri Jun 13 15:44:20 2025 +1000)
+* 9ec4596 - bump version to 0.6.2 (Ronald Holshausen, Fri May 16 09:42:18 2025 +1000)
+
 # 0.6.1 - Small fixes
 
 * 654cb97 - feat: Add Server-Timing response header (Ronald Holshausen, Thu May 15 15:49:22 2025 +1000)
