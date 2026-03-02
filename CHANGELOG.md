@@ -1,5 +1,10 @@
 
 
+# 0.6.3 - Maintenance Release
+
+* 6592321 - chore: Update dependencies (Ronald Holshausen, Mon Mar 2 14:08:07 2026 +1100)
+* 45fb778 - bump version to 0.6.3 (Ronald Holshausen, Mon Jun 16 10:00:27 2025 +1000)
+
 # 0.6.2 - Bugfix Release
 
 * 7ab7313 - fix: Resource path was incorrectly calculated from the base path (Ronald Holshausen, Fri Jun 13 15:44:20 2025 +1000)
