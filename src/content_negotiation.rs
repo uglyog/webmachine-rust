@@ -1,11 +1,13 @@
 //! The `content_negotiation` module deals with handling media types, languages, charsets and
 //! encodings as per https://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html.
 
-use itertools::Itertools;
 use std::cmp::Ordering;
+
+use itertools::Itertools;
+
+use crate::Resource;
+use crate::context::{WebmachineContext, WebmachineRequest};
 use crate::headers::HeaderValue;
-use crate::context::WebmachineRequest;
-use crate::WebmachineResource;
 
 /// Enum to represent a match with media types
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -14,10 +16,20 @@ pub enum MediaTypeMatch {
     Full,
     /// Match where the sub-type was a wild card
     SubStar,
-    /// Full whild card match (type and sub-type)
+    /// Full wild card match (type and sub-type)
     Star,
     /// Does not match
     None
+}
+
+impl MediaTypeMatch {
+  /// If the match is a full or partial match
+  pub fn is_match(&self) -> bool {
+    match self {
+      MediaTypeMatch::None => false,
+      _ => true
+    }
+  }
 }
 
 /// Struct to represent a media type
@@ -72,15 +84,19 @@ impl MediaType {
 
     /// If this media type matches the other media type
     pub fn matches(&self, other: &MediaType) -> MediaTypeMatch {
-        if other.main == "*" {
-            MediaTypeMatch::Star
-        } else if self.main == other.main && other.sub == "*" {
-            MediaTypeMatch::SubStar
-        } else if self.main == other.main && self.sub == other.sub {
-            MediaTypeMatch::Full
+      if other.main == "*" {
+        if other.sub == "*" || self.sub == other.sub {
+          MediaTypeMatch::Star
         } else {
-            MediaTypeMatch::None
+          MediaTypeMatch::None
         }
+      } else if self.main == other.main && other.sub == "*" {
+          MediaTypeMatch::SubStar
+      } else if self.main == other.main && self.sub == other.sub {
+          MediaTypeMatch::Full
+      } else {
+          MediaTypeMatch::None
+      }
     }
 
     /// Converts this media type into a string
@@ -116,11 +132,10 @@ pub fn sort_media_types(media_types: &Vec<HeaderValue>) -> Vec<HeaderValue> {
 
 /// Determines if the media types produced by the resource matches the acceptable media types
 /// provided by the client. Returns the match if there is one.
-pub fn matching_content_type(resource: &WebmachineResource, request: &WebmachineRequest) -> Option<String> {
+pub fn matching_content_type(resource: &(dyn Resource + Send + Sync), request: &WebmachineRequest) -> Option<String> {
   if request.has_accept_header() {
     let acceptable_media_types = sort_media_types(&request.accept());
-    resource.produces.iter()
-      .cloned()
+    resource.produces().iter()
       .cartesian_product(acceptable_media_types.iter())
       .map(|(produced, acceptable)| {
         let acceptable_media_type = acceptable.as_media_type();
@@ -129,10 +144,25 @@ pub fn matching_content_type(resource: &WebmachineResource, request: &Webmachine
       })
       .sorted_by(|a, b| Ord::cmp(&a.2, &b.2))
       .filter(|val| val.2 != MediaTypeMatch::None)
-      .next().map(|result| result.0.to_string())
+      .next()
+      .map(|result| result.0.to_string())
   } else {
-    resource.produces.first().map(|s| s.to_string())
+    resource.produces().first().map(|s| s.to_string())
   }
+}
+
+/// Determines if the media type accepted by the resource matches the media type
+/// provided by the client. Returns the match if there is one.
+pub fn acceptable_content_type(
+  resource: &(dyn Resource + Send + Sync),
+  context: &mut WebmachineContext
+) -> bool {
+  let ct = context.request.content_type().as_media_type();
+  resource.acceptable_content_types(context)
+    .iter()
+    .any(|acceptable_ct| {
+      ct.matches(&MediaType::parse_string(acceptable_ct)).is_match()
+    })
 }
 
 /// Struct to represent a media language
@@ -221,14 +251,14 @@ pub fn sort_media_languages(media_languages: &Vec<HeaderValue>) -> Vec<MediaLang
 
 /// Determines if the languages produced by the resource matches the acceptable languages
 /// provided by the client. Returns the match if there is one.
-pub fn matching_language(resource: &WebmachineResource, request: &WebmachineRequest) -> Option<String> {
+pub fn matching_language(resource: &(dyn Resource + Send + Sync), request: &WebmachineRequest) -> Option<String> {
   if request.has_accept_language_header() && !request.accept_language().is_empty() {
     let acceptable_languages = sort_media_languages(&request.accept_language());
-    if resource.languages_provided.is_empty() {
+    if resource.languages_provided().is_empty() {
       acceptable_languages.first().map(|lang| lang.to_string())
     } else {
       acceptable_languages.iter()
-        .cartesian_product(resource.languages_provided.iter())
+        .cartesian_product(resource.languages_provided().iter())
         .map(|(acceptable_language, produced_language)| {
           let produced_language = MediaLanguage::parse_string(produced_language);
           (produced_language.clone(), produced_language.matches(&acceptable_language))
@@ -236,10 +266,10 @@ pub fn matching_language(resource: &WebmachineResource, request: &WebmachineRequ
         .find(|val| val.1)
         .map(|result| result.0.to_string())
     }
-  } else if resource.languages_provided.is_empty() {
+  } else if resource.languages_provided().is_empty() {
     Some("*".to_string())
   } else {
-    resource.languages_provided.first().map(|s| s.to_string())
+    resource.languages_provided().first().map(|s| s.to_string())
   }
 }
 
@@ -311,14 +341,14 @@ pub fn sort_media_charsets(charsets: &Vec<HeaderValue>) -> Vec<Charset> {
 
 /// Determines if the charsets produced by the resource matches the acceptable charsets
 /// provided by the client. Returns the match if there is one.
-pub fn matching_charset(resource: &WebmachineResource, request: &WebmachineRequest) -> Option<String> {
+pub fn matching_charset(resource: &(dyn Resource + Send + Sync), request: &WebmachineRequest) -> Option<String> {
   if request.has_accept_charset_header() && !request.accept_charset().is_empty() {
     let acceptable_charsets = sort_media_charsets(&request.accept_charset());
-    if resource.charsets_provided.is_empty() {
+    if resource.charsets_provided().is_empty() {
       acceptable_charsets.first().map(|cs| cs.to_string())
     } else {
       acceptable_charsets.iter()
-        .cartesian_product(resource.charsets_provided.iter())
+        .cartesian_product(resource.charsets_provided().iter())
         .map(|(acceptable_charset, provided_charset)| {
             let provided_charset = Charset::parse_string(provided_charset);
             (provided_charset.clone(), provided_charset.matches(&acceptable_charset))
@@ -326,10 +356,10 @@ pub fn matching_charset(resource: &WebmachineResource, request: &WebmachineReque
         .find(|val| val.1)
         .map(|result| result.0.to_string())
     }
-  } else if resource.charsets_provided.is_empty() {
+  } else if resource.charsets_provided().is_empty() {
     Some("ISO-8859-1".to_string())
   } else {
-    resource.charsets_provided.first().map(|s| s.to_string())
+    resource.charsets_provided().first().map(|s| s.to_string())
   }
 }
 
@@ -401,11 +431,11 @@ pub fn sort_encodings(encodings: &Vec<HeaderValue>) -> Vec<Encoding> {
 
 /// Determines if the encodings supported by the resource matches the acceptable encodings
 /// provided by the client. Returns the match if there is one.
-pub fn matching_encoding(resource: &WebmachineResource, request: &WebmachineRequest) -> Option<String> {
+pub fn matching_encoding(resource: &(dyn Resource + Send + Sync), request: &WebmachineRequest) -> Option<String> {
   let identity = Encoding::parse_string("identity");
   if request.has_accept_encoding_header() {
     let acceptable_encodings = sort_encodings(&request.accept_encoding());
-    if resource.encodings_provided.is_empty() {
+    if resource.encodings_provided().is_empty() {
       if acceptable_encodings.contains(&identity) {
         Some("identity".to_string())
       } else {
@@ -413,7 +443,7 @@ pub fn matching_encoding(resource: &WebmachineResource, request: &WebmachineRequ
       }
     } else {
       acceptable_encodings.iter()
-        .cartesian_product(resource.encodings_provided.iter())
+        .cartesian_product(resource.encodings_provided().iter())
         .map(|(acceptable_encoding, provided_encoding)| {
           let provided_encoding = Encoding::parse_string(provided_encoding);
           (provided_encoding.clone(), provided_encoding.matches(&acceptable_encoding))
@@ -421,9 +451,9 @@ pub fn matching_encoding(resource: &WebmachineResource, request: &WebmachineRequ
         .find(|val| val.1)
         .map(|result| { result.0.to_string() })
     }
-  } else if resource.encodings_provided.is_empty() {
+  } else if resource.encodings_provided().is_empty() {
     Some("identity".to_string())
   } else {
-    resource.encodings_provided.first().map(|s| s.to_string())
+    resource.encodings_provided().first().map(|s| s.to_string())
   }
 }

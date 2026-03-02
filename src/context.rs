@@ -1,27 +1,34 @@
 //! The `context` module encapsulates the context of the environment that the webmachine is
 //! executing in. Basically wraps the request and response.
 
+use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
-
+use std::fmt::{Debug, Display};
+use std::sync::Arc;
+use std::time::SystemTime;
+use bytes::Bytes;
 use chrono::{DateTime, FixedOffset};
 use maplit::hashmap;
-use itertools::Itertools;
 
 use crate::headers::HeaderValue;
 
 /// Request that the state machine is executing against
 #[derive(Debug, Clone, PartialEq)]
 pub struct WebmachineRequest {
-  /// Path of the request relative to the resource
+  /// Path of the received request
   pub request_path: String,
-  /// Resource base path
+  /// Resource base path (configured in the dispatcher)
   pub base_path: String,
+  /// Any additional path after the base path
+  pub sub_path: Option<String>,
+  /// Path parts mapped to any variables (i.e. parts like /{id} will have id mapped)
+  pub path_vars: HashMap<String, String>,
   /// Request method
   pub method: String,
   /// Request headers
   pub headers: HashMap<String, Vec<HeaderValue>>,
   /// Request body
-  pub body: Option<Vec<u8>>,
+  pub body: Option<Bytes>,
   /// Query parameters
   pub query: HashMap<String, Vec<String>>
 }
@@ -32,6 +39,8 @@ impl Default for WebmachineRequest {
     WebmachineRequest {
       request_path: "/".to_string(),
       base_path: "/".to_string(),
+      sub_path: None,
+      path_vars: Default::default(),
       method: "GET".to_string(),
       headers: HashMap::new(),
       body: None,
@@ -43,13 +52,13 @@ impl Default for WebmachineRequest {
 impl WebmachineRequest {
     /// returns the content type of the request, based on the content type header. Defaults to
     /// 'application/json' if there is no header.
-    pub fn content_type(&self) -> String {
+    pub fn content_type(&self) -> HeaderValue {
       match self.headers.keys().find(|k| k.to_uppercase() == "CONTENT-TYPE") {
         Some(header) => match self.headers.get(header).unwrap().first() {
-          Some(value) => value.clone().value,
-          None => "application/json".to_string()
+          Some(value) => value.clone(),
+          None => HeaderValue::json()
         },
-        None => "application/json".to_string()
+        None => HeaderValue::json()
       }
     }
 
@@ -162,7 +171,7 @@ pub struct WebmachineResponse {
     /// headers to return
     pub headers: BTreeMap<String, Vec<HeaderValue>>,
     /// Response Body
-    pub body: Option<Vec<u8>>
+    pub body: Option<Bytes>
 }
 
 impl WebmachineResponse {
@@ -193,7 +202,7 @@ impl WebmachineResponse {
     }
 
     /// Adds standard CORS headers to the response
-    pub fn add_cors_headers(&mut self, allowed_methods: &Vec<&str>) {
+    pub fn add_cors_headers(&mut self, allowed_methods: &[&str]) {
       let cors_headers = WebmachineResponse::cors_headers(allowed_methods);
       for (k, v) in cors_headers {
         self.add_header(k.as_str(), v.iter().map(HeaderValue::basic).collect());
@@ -201,10 +210,10 @@ impl WebmachineResponse {
     }
 
     /// Returns a HashMap of standard CORS headers
-    pub fn cors_headers(allowed_methods: &Vec<&str>) -> HashMap<String, Vec<String>> {
+    pub fn cors_headers(allowed_methods: &[&str]) -> HashMap<String, Vec<String>> {
       hashmap!{
         "Access-Control-Allow-Origin".to_string() => vec!["*".to_string()],
-        "Access-Control-Allow-Methods".to_string() => allowed_methods.iter().cloned().map_into().collect(),
+        "Access-Control-Allow-Methods".to_string() => allowed_methods.iter().map(|v| v.to_string()).collect(),
         "Access-Control-Allow-Headers".to_string() => vec!["Content-Type".to_string()]
       }
     }
@@ -218,8 +227,134 @@ impl WebmachineResponse {
     }
 }
 
+/// Trait to store arbitrary values
+pub trait MetaDataThing: Any + Debug {}
+
+/// Values that can be stored as metadata
+#[derive(Debug, Clone)]
+pub enum MetaDataValue {
+  /// No Value,
+  Empty,
+  /// String Value
+  String(String),
+  /// Unsigned integer
+  UInteger(u64),
+  /// Signed integer
+  Integer(i64),
+  /// Boxed Any
+  Anything(Arc<dyn MetaDataThing + Send + Sync>)
+}
+
+impl MetaDataValue {
+  /// If the metadata value is empty
+  pub fn is_empty(&self) -> bool {
+    match self {
+      MetaDataValue::Empty => true,
+      _ => false
+    }
+  }
+
+  /// If the metadata value is a String
+  pub fn as_string(&self) -> Option<String> {
+    match self {
+      MetaDataValue::String(s) => Some(s.clone()),
+      _ => None
+    }
+  }
+
+  /// If the metadata value is an unsigned integer
+  pub fn as_uint(&self) -> Option<u64> {
+    match self {
+      MetaDataValue::UInteger(u) => Some(*u),
+      _ => None
+    }
+  }
+
+  /// If the metadata value is a signed integer
+  pub fn as_int(&self) -> Option<i64> {
+    match self {
+      MetaDataValue::Integer(i) => Some(*i),
+      _ => None
+    }
+  }
+
+  /// If the metadata value is an Anything
+  pub fn as_anything(&self) -> Option<&(dyn Any + Send + Sync)> {
+    match self {
+      MetaDataValue::Anything(thing) => Some(thing.as_ref()),
+      _ => None
+    }
+  }
+}
+
+impl Display for MetaDataValue {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      MetaDataValue::String(s) => write!(f, "{}", s.as_str()),
+      MetaDataValue::UInteger(u) => write!(f, "{}", *u),
+      MetaDataValue::Integer(i) => write!(f, "{}", *i),
+      MetaDataValue::Empty => Ok(()),
+      MetaDataValue::Anything(thing) => write!(f, "any({:?})", thing)
+    }
+  }
+}
+
+impl Default for MetaDataValue {
+  fn default() -> Self {
+    MetaDataValue::Empty
+  }
+}
+
+impl Default for &MetaDataValue {
+  fn default() -> Self {
+    &MetaDataValue::Empty
+  }
+}
+
+impl From<String> for MetaDataValue {
+  fn from(value: String) -> Self {
+    MetaDataValue::String(value)
+  }
+}
+
+impl From<&String> for MetaDataValue {
+  fn from(value: &String) -> Self {
+    MetaDataValue::String(value.clone())
+  }
+}
+
+impl From<&str> for MetaDataValue {
+  fn from(value: &str) -> Self {
+    MetaDataValue::String(value.to_string())
+  }
+}
+
+impl From<u16> for MetaDataValue {
+  fn from(value: u16) -> Self {
+    MetaDataValue::UInteger(value as u64)
+  }
+}
+
+impl From<i16> for MetaDataValue {
+  fn from(value: i16) -> Self {
+    MetaDataValue::Integer(value as i64)
+  }
+}
+
+impl From<u64> for MetaDataValue {
+  fn from(value: u64) -> Self {
+    MetaDataValue::UInteger(value)
+  }
+}
+
+impl From<i64> for MetaDataValue {
+  fn from(value: i64) -> Self {
+    MetaDataValue::Integer(value)
+  }
+}
+
 /// Main context struct that holds the request and response.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct WebmachineContext {
   /// Request that the webmachine is executing against
   pub request: WebmachineRequest,
@@ -242,7 +377,18 @@ pub struct WebmachineContext {
   /// If a new resource was created
   pub new_resource: bool,
   /// General store of metadata. You can use this to store attributes as the webmachine executes.
-  pub metadata: HashMap<String, String>
+  pub metadata: HashMap<String, MetaDataValue>,
+  /// Start time instant when the context was created
+  pub start_time: SystemTime
+}
+
+impl WebmachineContext {
+  /// Convenience method to downcast a metadata anything value
+  pub fn downcast_metadata_value<'a, T: 'static>(&'a self, key: &'a str) -> Option<&'a T> {
+    self.metadata.get(key)
+      .and_then(|value| value.as_anything())
+      .and_then(|value| value.downcast_ref())
+  }
 }
 
 impl Default for WebmachineContext {
@@ -259,7 +405,8 @@ impl Default for WebmachineContext {
       if_modified_since: None,
       redirect: false,
       new_resource: false,
-      metadata: HashMap::new()
+      metadata: HashMap::new(),
+      start_time: SystemTime::now()
     }
   }
 }

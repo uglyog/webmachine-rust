@@ -1,5 +1,48 @@
 
 
+# 0.6.2 - Bugfix Release
+
+* 7ab7313 - fix: Resource path was incorrectly calculated from the base path (Ronald Holshausen, Fri Jun 13 15:44:20 2025 +1000)
+* 9ec4596 - bump version to 0.6.2 (Ronald Holshausen, Fri May 16 09:42:18 2025 +1000)
+
+# 0.6.1 - Small fixes
+
+* 654cb97 - feat: Add Server-Timing response header (Ronald Holshausen, Thu May 15 15:49:22 2025 +1000)
+* 7749919 - chore: Add incoming request and dispatch debug statements (Ronald Holshausen, Thu May 15 15:05:08 2025 +1000)
+* bd62fa3 - feat: Add convenience method to downcast a metadata anything value (Ronald Holshausen, Thu May 15 11:17:55 2025 +1000)
+* 2cfa560 - chore: do not dump the full response on every request (Ronald Holshausen, Thu May 15 10:14:08 2025 +1000)
+* a316132 - fix: Support wild card with acceptable_content_types (Ronald Holshausen, Thu May 15 10:04:35 2025 +1000)
+* 5989849 - bump version to 0.6.1 (Ronald Holshausen, Mon May 12 10:53:50 2025 +1000)
+
+# 0.6.0 - Support async resource methods + resource trait
+
+* fb55351 - chore: Update release script (Ronald Holshausen, Mon May 12 10:49:50 2025 +1000)
+* 0d9bc0c - chore: Update macos runners to latest (Ronald Holshausen, Mon May 12 09:27:01 2025 +1000)
+* d4e99be - feat: Add support to store anything the running context (Ronald Holshausen, Fri May 9 16:39:31 2025 +1000)
+* 8370e01 - feat: Make resource_exists async as it may need to access async resources (Ronald Holshausen, Fri May 9 16:39:01 2025 +1000)
+* cc81cb9 - feat: Update Dispatcher to use the Resource trait (Ronald Holshausen, Fri May 9 13:20:07 2025 +1000)
+* 3a8879e - feat: Add a Resource trait for Webmachine resources (Ronald Holshausen, Fri May 9 12:20:04 2025 +1000)
+* eab3bf4 - feat: Support variables on resource paths (Ronald Holshausen, Thu May 8 17:41:36 2025 +1000)
+* f9929bf - fix: When comparing content-type values, ignore the attributes (Ronald Holshausen, Tue May 6 15:24:03 2025 +1000)
+* c17fb37 - feat: Make process_post async (Ronald Holshausen, Tue May 6 09:23:52 2025 +1000)
+* 18d9ef4 - feat: Make finalise_response, dispatch_to_resource and render_response functions async (Ronald Holshausen, Mon May 5 16:05:48 2025 +1000)
+* 3107974 - chore: Update to 2024 Rust edition (Ronald Holshausen, Mon May 5 10:43:07 2025 +1000)
+* f2157a6 - bump version to 0.5.1 (Ronald Holshausen, Fri Jun 28 15:14:23 2024 +1000)
+
+# 0.5.0 - Refactor: simplify things by removing all references, lifetimes, arcs and mutexes
+
+* c43fb7d - feat: Implement Default and From for MetaDataValue (Ronald Holshausen, Fri Jun 28 15:10:50 2024 +1000)
+* 7567ef0 - Refactor: simplify things by removing all references, lifetimes, arcs and mutexes (Ronald Holshausen, Fri Jun 28 14:24:58 2024 +1000)
+* b1e9ba2 - chore: Bump minor version (Ronald Holshausen, Fri Jun 28 12:45:03 2024 +1000)
+* dc2936f - bump version to 0.4.1 (Ronald Holshausen, Fri Jun 7 15:55:59 2024 +1000)
+
+# 0.4.0 - Upgrade Hyper and Http crates to 1.0
+
+* 6ed86b0 - chore: Update readme (Ronald Holshausen, Fri Jun 7 12:49:51 2024 +1000)
+* d90b39c - chore: Convert to Hyper and Http 1.0 (Ronald Holshausen, Fri Jun 7 12:46:15 2024 +1000)
+* d1c0015 - chore: Update deps, setup GH build (Ronald Holshausen, Fri Jun 7 11:48:58 2024 +1000)
+* 8ed0beb - bump version to 0.3.1 (Ronald Holshausen, Wed Jun 14 10:33:28 2023 +1000)
+
 # 0.3.0 - update to Rust 2021 edition + switch to using the tracing crate
 
 * 0b9c91d - chore: switch to using the tracing crate (Ronald Holshausen, Wed Jun 14 10:19:49 2023 +1000)

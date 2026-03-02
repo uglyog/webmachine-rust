@@ -7,10 +7,10 @@ use expectest::prelude::*;
 #[test]
 fn matches_if_no_accept_header_is_provided() {
   let resource = WebmachineResource {
-    ..WebmachineResource::default()
+    .. WebmachineResource::default()
   };
   let request = WebmachineRequest {
-    ..WebmachineRequest::default()
+    .. WebmachineRequest::default()
   };
   expect!(matching_content_type(&resource, &request)).to(be_some().value("application/json"));
 }
@@ -77,19 +77,19 @@ fn matches_most_specific() {
     ..WebmachineResource::default()
   };
   let resource2 = WebmachineResource {
-    produces: vec!["application/pdf"],
+    produces: owned_vec(&["application/pdf"]),
     ..WebmachineResource::default()
   };
   let resource3 = WebmachineResource {
-    produces: vec!["text/plain"],
+    produces: owned_vec(&["text/plain"]),
     ..WebmachineResource::default()
   };
   let resource4 = WebmachineResource {
-    produces: vec!["text/plain", "application/pdf", "application/json"],
+    produces: owned_vec(&["text/plain", "application/pdf", "application/json"]),
     ..WebmachineResource::default()
   };
   let resource5 = WebmachineResource {
-    produces: vec!["text/plain", "application/pdf"],
+    produces: owned_vec(&["text/plain", "application/pdf"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -145,6 +145,8 @@ fn media_type_matches_test() {
   expect!(media_type.matches(&MediaType { main: "application".to_string(), sub: "*".to_string(), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::SubStar));
   expect!(media_type.matches(&MediaType { main: "*".to_string(), sub: "*".to_string(), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::Star));
   expect!(media_type.matches(&MediaType { main: "application".to_string(), sub: "application".to_string(), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::None));
+  expect!(media_type.matches(&MediaType { main: "*".to_string(), sub: "json".to_string(), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::Star));
+  expect!(media_type.matches(&MediaType { main: "*".to_string(), sub: "xml".to_string(), weight: 1.0 })).to(be_equal_to(MediaTypeMatch::None));
 }
 
 #[test]
@@ -175,7 +177,7 @@ fn matching_language_matches_if_the_resource_does_not_define_any_language() {
 #[test]
 fn matching_language_matches_if_the_request_language_is_empty() {
   let resource = WebmachineResource {
-    languages_provided: vec!["x-pig-latin"],
+    languages_provided: owned_vec(&["x-pig-latin"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -190,7 +192,7 @@ fn matching_language_matches_if_the_request_language_is_empty() {
 #[test]
 fn matching_language_matches_exact_language() {
   let resource = WebmachineResource {
-    languages_provided: vec!["en-gb"],
+    languages_provided: owned_vec(&["en-gb"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -205,7 +207,7 @@ fn matching_language_matches_exact_language() {
 #[test]
 fn matching_language_wild_card() {
   let resource = WebmachineResource {
-    languages_provided: vec!["en-gb"],
+    languages_provided: owned_vec(&["en-gb"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -220,7 +222,7 @@ fn matching_language_wild_card() {
 #[test]
 fn matching_language_matches_prefix() {
   let resource = WebmachineResource {
-    languages_provided: vec!["en"],
+    languages_provided: owned_vec(&["en"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -235,7 +237,7 @@ fn matching_language_matches_prefix() {
 #[test]
 fn matching_language_does_not_match_prefix_if_it_does_not_end_with_dash() {
   let resource = WebmachineResource {
-    languages_provided: vec!["e"],
+    languages_provided: owned_vec(&["e"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -250,7 +252,7 @@ fn matching_language_does_not_match_prefix_if_it_does_not_end_with_dash() {
 #[test]
 fn matching_language_does_not_match_if_quality_is_zero() {
   let resource = WebmachineResource {
-    languages_provided: vec!["en"],
+    languages_provided: owned_vec(&["en"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -265,7 +267,7 @@ fn matching_language_does_not_match_if_quality_is_zero() {
 #[test]
 fn matching_language_does_not_match_wildcard_if_quality_is_zero() {
   let resource = WebmachineResource {
-    languages_provided: vec!["en"],
+    languages_provided: owned_vec(&["en"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -283,15 +285,15 @@ fn matches_most_specific_language() {
     ..WebmachineResource::default()
   };
   let resource2 = WebmachineResource {
-    languages_provided: vec!["en-gb"],
+    languages_provided: owned_vec(&["en-gb"]),
     ..WebmachineResource::default()
   };
   let resource3 = WebmachineResource {
-    languages_provided: vec!["en"],
+    languages_provided: owned_vec(&["en"]),
     ..WebmachineResource::default()
   };
   let resource4 = WebmachineResource {
-    languages_provided: vec!["en-gb", "da"],
+    languages_provided: owned_vec(&["en-gb", "da"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -347,7 +349,7 @@ fn matching_charset_matches_if_the_resource_does_not_define_any_charset() {
 #[test]
 fn matching_charset_matches_if_the_request_language_is_empty() {
   let resource = WebmachineResource {
-    charsets_provided: vec!["Shift-JIS"],
+    charsets_provided: owned_vec(&["Shift-JIS"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -362,7 +364,7 @@ fn matching_charset_matches_if_the_request_language_is_empty() {
 #[test]
 fn matching_charset_matches_exact_charset() {
   let resource = WebmachineResource {
-    charsets_provided: vec!["ISO-8859-5"],
+    charsets_provided: owned_vec(&["ISO-8859-5"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -377,7 +379,7 @@ fn matching_charset_matches_exact_charset() {
 #[test]
 fn matching_charset_wild_card() {
   let resource = WebmachineResource {
-    charsets_provided: vec!["US-ASCII"],
+    charsets_provided: owned_vec(&["US-ASCII"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -392,7 +394,7 @@ fn matching_charset_wild_card() {
 #[test]
 fn matching_charset_does_not_match_if_quality_is_zero() {
   let resource = WebmachineResource {
-    charsets_provided: vec!["US-ASCII"],
+    charsets_provided: owned_vec(&["US-ASCII"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -410,15 +412,15 @@ fn matches_most_specific_charset() {
     ..WebmachineResource::default()
   };
   let resource2 = WebmachineResource {
-    charsets_provided: vec!["US-ASCII"],
+    charsets_provided: owned_vec(&["US-ASCII"]),
     ..WebmachineResource::default()
   };
   let resource3 = WebmachineResource {
-    charsets_provided: vec!["UTF-8"],
+    charsets_provided: owned_vec(&["UTF-8"]),
     ..WebmachineResource::default()
   };
   let resource4 = WebmachineResource {
-    charsets_provided: vec!["UTF-8", "US-ASCII"],
+    charsets_provided: owned_vec(&["UTF-8", "US-ASCII"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -501,7 +503,7 @@ fn matching_encoding_does_not_match_if_the_resource_does_not_define_any_encoding
 #[test]
 fn matching_encoding_matches_if_the_request_encoding_is_empty_and_the_resource_provides_identity() {
   let resource = WebmachineResource {
-    encodings_provided: vec!["compress", "identity"],
+    encodings_provided: owned_vec(&["compress", "identity"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -516,7 +518,7 @@ fn matching_encoding_matches_if_the_request_encoding_is_empty_and_the_resource_p
 #[test]
 fn matching_encoding_does_not_match_if_the_request_encoding_is_empty_and_the_resource_does_not_provide_identity() {
   let resource = WebmachineResource {
-    encodings_provided: vec!["compress", "gzip"],
+    encodings_provided: owned_vec(&["compress", "gzip"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -531,7 +533,7 @@ fn matching_encoding_does_not_match_if_the_request_encoding_is_empty_and_the_res
 #[test]
 fn matching_encoding_matches_exact_encoding() {
   let resource = WebmachineResource {
-    encodings_provided: vec!["gzip"],
+    encodings_provided: owned_vec(&["gzip"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -546,7 +548,7 @@ fn matching_encoding_matches_exact_encoding() {
 #[test]
 fn matching_encoding_wild_card() {
   let resource = WebmachineResource {
-    encodings_provided: vec!["compress"],
+    encodings_provided: owned_vec(&["compress"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -561,7 +563,7 @@ fn matching_encoding_wild_card() {
 #[test]
 fn matching_encoding_does_not_match_if_quality_is_zero() {
   let resource = WebmachineResource {
-    encodings_provided: vec!["gzip"],
+    encodings_provided: owned_vec(&["gzip"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -576,7 +578,7 @@ fn matching_encoding_does_not_match_if_quality_is_zero() {
 #[test]
 fn matching_encoding_does_not_match_if_star_quality_is_zero() {
   let resource = WebmachineResource {
-    encodings_provided: vec!["identity"],
+    encodings_provided: owned_vec(&["identity"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -591,7 +593,7 @@ fn matching_encoding_does_not_match_if_star_quality_is_zero() {
 #[test]
 fn matching_encoding_always_matches_if_identity_is_available() {
   let resource = WebmachineResource {
-    encodings_provided: vec!["identity"],
+    encodings_provided: owned_vec(&["identity"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {
@@ -609,15 +611,15 @@ fn matches_most_specific_encoding() {
     ..WebmachineResource::default()
   };
   let resource2 = WebmachineResource {
-    encodings_provided: vec!["gzip"],
+    encodings_provided: owned_vec(&["gzip"]),
     ..WebmachineResource::default()
   };
   let resource3 = WebmachineResource {
-    encodings_provided: vec!["compress", "identity"],
+    encodings_provided: owned_vec(&["compress", "identity"]),
     ..WebmachineResource::default()
   };
   let resource4 = WebmachineResource {
-    encodings_provided: vec!["compress", "gzip", "identity"],
+    encodings_provided: owned_vec(&["compress", "gzip", "identity"]),
     ..WebmachineResource::default()
   };
   let request = WebmachineRequest {

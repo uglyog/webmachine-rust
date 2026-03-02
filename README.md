@@ -39,26 +39,31 @@ This implementation has the following deficiencies:
 Follow the getting started documentation from the Hyper crate to setup a Hyper service for your server.
 You need to define a WebmachineDispatcher that maps resource paths to your webmachine resources (WebmachineResource).
 Each WebmachineResource defines all the callbacks (via Closures) and values required to implement a resource.
-The WebmachineDispatcher implementes the Hyper Service trait, so you can pass it to the `make_service_fn`.
 
 Note: This example uses the maplit crate to provide the `btreemap` macro and the log crate for the logging macros.
 
  ```rust
- use hyper::server::Server;
- use webmachine_rust::*;
- use webmachine_rust::context::*;
- use webmachine_rust::headers::*;
- use serde_json::{Value, json};
- use std::io::Read;
- use std::net::SocketAddr;
- use hyper::service::make_service_fn;
- use std::convert::Infallible;
+use webmachine_rust::*;
+use webmachine_rust::context::*;
+use webmachine_rust::headers::*;
+use serde_json::{Value, json};
+use std::io::Read;
+use std::net::SocketAddr;
+use std::convert::Infallible;
+use std::sync::Arc;
+use maplit::btreemap;
+use tracing::error;
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpListener;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{body, Request};
 
- // setup the dispatcher, which maps paths to resources. The requirement of make_service_fn is
- // that it has a static lifetime
- fn dispatcher() -> WebmachineDispatcher<'static> {
-   WebmachineDispatcher {
-       routes: btreemap!{
+async fn start_server() -> anyhow::Result<()> {
+  // setup the dispatcher, which maps paths to resources. We wrap it in an Arc so we can
+  // use it in the loop below.
+  let dispatcher = Arc::new(WebmachineDispatcher {
+    routes: btreemap!{
           "/myresource" => WebmachineResource {
             // Methods allowed on this resource
             allowed_methods: vec!["OPTIONS", "GET", "HEAD", "POST"],
@@ -77,27 +82,28 @@ Note: This example uses the maplit crate to provide the `btreemap` macro and the
             .. WebmachineResource::default()
           }
       }
-   }
- }
+  });
 
- async fn start_server() -> Result<(), String> {
-   // Create a Hyper server that delegates to the dispatcher
-   let addr = "0.0.0.0:8080".parse().unwrap();
-   let make_svc = make_service_fn(|_| async { Ok::<_, Infallible>(dispatcher()) });
-   match Server::try_bind(&addr) {
-     Ok(server) => {
-       // start the actual server
-       server.serve(make_svc).await;
-       Ok(())
-     },
-     Err(err) => {
-       error!("could not start server: {}", err);
-       Err(format!("could not start server: {}", err))
-     }
-   }
- }
+  // Create a Hyper server that delegates to the dispatcher. See https://hyper.rs/guides/1/server/hello-world/
+  let addr: SocketAddr = "0.0.0.0:8080".parse()?;
+  let listener = TcpListener::bind(addr).await?;
+  loop {
+    let dispatcher = dispatcher.clone();
+    let (stream, _) = listener.accept().await?;
+    let io = TokioIo::new(stream);
+    tokio::task::spawn(async move {
+      if let Err(err) = http1::Builder::new()
+        .serve_connection(io, service_fn(|req: Request<body::Incoming>| dispatcher.dispatch(req)))
+        .await
+      {
+        error!("Error serving connection: {:?}", err);
+      }
+    });
+  }
+  Ok(())
+}
  ```
 
 ## Example implementations
 
-For an example of a project using this crate, have a look at the [Pact Mock Server](https://github.com/pact-foundation/pact-reference/tree/master/rust/v1/pact_mock_server_cli) from the Pact reference implementation.
+For an example of a project using this crate, have a look at the [Pact Mock Server](https://github.com/pact-foundation/pact-core-mock-server/tree/main/pact_mock_server_cli) from the Pact reference implementation.
